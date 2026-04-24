@@ -1,0 +1,4 @@
+export const CYBER4ALL_PROD_ACCOUNT_ID = "194683060534";
+export const CYBER4ALL_STAGING_ACCOUNT_ID = "317620868823";
+
+export const AWS_REGION = "us-east-1";

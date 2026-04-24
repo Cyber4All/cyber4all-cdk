@@ -1,5 +1,5 @@
 {
-  "app": "npx ts-node --prefer-ts-exts bin/cyber4all-cdk.ts",
+  "app": "npx ts-node --prefer-ts-exts src/main.ts",
   "watch": {
     "include": [
       "**"
@@ -13,6 +13,7 @@
       "package*.json",
       "yarn.lock",
       "node_modules",
+      "dist",
       "test"
     ]
   },
