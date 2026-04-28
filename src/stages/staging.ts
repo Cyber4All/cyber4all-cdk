@@ -1,12 +1,7 @@
 import { Stage, StageProps } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { Environment } from "../shared/types";
-import { CardStack } from "../stacks/card";
-import { ClarkStack } from "../stacks/clark";
-import { CompetencyStack } from "../stacks/competency";
 import { MongoAtlasStack } from "../stacks/mongo-atlas";
-import { SharedPlatformStack } from "../stacks/shared-platform";
-import { VpcStack } from "../stacks/vpc";
 
 const DOMAIN_NAME = "yeetbot.click";
 
@@ -16,11 +11,11 @@ export class StagingStage extends Stage {
 
         const commonProps = { environment: Environment.STAGING };
 
-        const vpcStack = new VpcStack(this, "VpcStack", { ...commonProps, domainName: DOMAIN_NAME });
-        new MongoAtlasStack(this, "MongoAtlasStack");
-        new SharedPlatformStack(this, "SharedPlatformStack", { ...commonProps, vpc: vpcStack.vpc });
-        new ClarkStack(this, "ClarkStack");
-        new CompetencyStack(this, "CompetencyStack");
-        new CardStack(this, "CardStack");
+        // const vpcStack = new VpcStack(this, "VpcStack", { ...commonProps, domainName: DOMAIN_NAME });
+        new MongoAtlasStack(this, "MongoAtlasStack", { ...commonProps });
+        // new SharedPlatformStack(this, "SharedPlatformStack", { ...commonProps, vpc: vpcStack.vpc });
+        // new ClarkStack(this, "ClarkStack");
+        // new CompetencyStack(this, "CompetencyStack");
+        // new CardStack(this, "CardStack");
     }
 }

@@ -18,3 +18,18 @@ export function getRegionShortName(region: string): string {
             throw new Error(`Unsupported region: ${region}`);
     }
 }
+
+export function getAtlasRegionName(region: string): string {
+    switch (region) {
+        case "us-east-1":
+            return "US_EAST_1";
+        case "us-east-2":
+            return "US_EAST_2";
+        case "us-west-1":
+            return "US_WEST_1";
+        case "us-west-2":
+            return "US_WEST_2";
+        default:
+            throw new Error(`Unsupported region: ${region}`);
+    }
+}

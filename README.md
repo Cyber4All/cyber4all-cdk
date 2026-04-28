@@ -1,8 +1,12 @@
-# Welcome to your CDK TypeScript project
+# Cyber4All CDK
 
-This is a blank project for CDK development with TypeScript.
+AWS CDK app for Cyber4All infrastructure.
 
 The `cdk.json` file tells the CDK Toolkit how to execute your app.
+
+## Docs
+
+- [MongoDB Atlas CloudFormation setup](./docs/mongodb-atlas-cloudformation.md)
 
 ## Useful commands
 
