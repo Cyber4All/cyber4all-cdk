@@ -37,19 +37,6 @@ export interface IMongoDBCluster {
 
 export interface MongoDBClusterProps {
     /**
-     * Atlas CloudFormation profile name.
-     *
-     * This should match the Atlas profile secret suffix, not the full secret path.
-     *
-     * Example:
-     * profile: "default"
-     *
-     * Secret path:
-     * cfn/atlas/profile/default
-     */
-    readonly profile?: string;
-
-    /**
      * Existing Atlas project id.
      *
      * Use this when the Atlas project is managed outside this construct
@@ -116,7 +103,7 @@ export class MongoDBCluster extends Construct implements IMongoDBCluster {
     constructor(scope: Construct, id: string, props: MongoDBClusterProps) {
         super(scope, id);
 
-        this.profile = props.profile ?? "default";
+        this.profile = "default";
         this.clusterName = props.clusterName;
 
         if (!props.projectId) {
@@ -164,6 +151,8 @@ export class MongoDBCluster extends Construct implements IMongoDBCluster {
         });
 
         this.connectionSecret.node.addDependency(this.cluster);
+
+        // Create a backup
     }
 
     private createCluster(props: MongoDBClusterProps, regionName: string, tags: Tag[]): CfnFlexCluster | CfnCluster {

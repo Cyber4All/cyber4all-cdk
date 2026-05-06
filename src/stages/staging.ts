@@ -2,6 +2,7 @@ import { Stage, StageProps } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import { Environment } from "../shared/types";
 import { MongoAtlasStack } from "../stacks/mongo-atlas";
+import { VpcStack } from "../stacks/vpc";
 
 const DOMAIN_NAME = "yeetbot.click";
 
@@ -11,8 +12,8 @@ export class StagingStage extends Stage {
 
         const commonProps = { environment: Environment.STAGING };
 
-        // const vpcStack = new VpcStack(this, "VpcStack", { ...commonProps, domainName: DOMAIN_NAME });
-        new MongoAtlasStack(this, "MongoAtlasStack", { ...commonProps });
+        const vpcStack = new VpcStack(this, "VpcStack", { ...commonProps, domainName: DOMAIN_NAME });
+        new MongoAtlasStack(this, "MongoAtlasStack", { ...commonProps, vpc: vpcStack.vpc });
         // new SharedPlatformStack(this, "SharedPlatformStack", { ...commonProps, vpc: vpcStack.vpc });
         // new ClarkStack(this, "ClarkStack");
         // new CompetencyStack(this, "CompetencyStack");

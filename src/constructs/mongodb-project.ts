@@ -5,13 +5,6 @@ import { DEFAULT_MONGODB_PROJECT_TAGS } from "../shared/tags";
 
 export interface MongoDBProjectProps {
     /**
-     * Atlas CloudFormation profile name.
-     * 
-     * @default "default"
-     */
-    profile?: string;
-
-    /**
      * Atlas project name.
      * This must be unique across all Atlas projects in the same organization.
      */
@@ -33,7 +26,7 @@ export class MongoDBProject extends Construct {
     constructor(scope: Construct, id: string, props: MongoDBProjectProps) {
         super(scope, id);
 
-        this.profile = props.profile ?? "default";
+        this.profile = "default";
 
         const tags = {
             ...DEFAULT_MONGODB_PROJECT_TAGS,

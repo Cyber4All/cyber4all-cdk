@@ -1,6 +1,8 @@
 import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
+import { IVpc } from "aws-cdk-lib/aws-ec2";
 import { Construct } from "constructs";
 import { MongoDBCluster } from "../constructs/mongodb-cluster";
+import { MongoDBNetwork } from "../constructs/mongodb-network";
 import { MongoDBProject } from "../constructs/mongodb-project";
 import { getRegionShortName } from "../shared/names";
 import { ENVIRONMENT_TAG } from "../shared/tags";
@@ -11,6 +13,11 @@ export interface MongoAtlasStackProps extends StackProps {
      * Deployment environment. This is used to name and tag resources appropriately.
      */
     readonly environment: Environment;
+
+    /**
+     * VPC to peer with MongoDB Atlas private endpoint.
+     */
+    readonly vpc: IVpc;
 }
 
 // See docs/mongodb-atlas-cloudformation.md for the MongoDB Atlas CloudFormation setup.
@@ -42,7 +49,7 @@ export class MongoAtlasStack extends Stack {
         //
         // TODO: In the future if the storage or compute needs increasing we
         // can update the optional props `diskSizeGb` and `instanceSize` to 
-        // set a larger cluster size.
+        // set a larger base cluster size.
         this.cluster = new MongoDBCluster(this, "MongoDBCluster", {
             projectId: this.project.projectId,
             clusterName: `${this.baseName}-cluster-${this.regionShortName}`,
@@ -51,6 +58,14 @@ export class MongoAtlasStack extends Stack {
                 { key: ENVIRONMENT_TAG, value: getEnvironmentName(props.environment) },
             ],
             removalPolicy: props.environment === Environment.PROD ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+        });
+
+        new MongoDBNetwork(this, "MongoDBNetwork", {
+            environment: props.environment,
+            project: this.project,
+            vpc: props.vpc,
+            // Allow all ingress in non-prod for ease of development. In prod, only allow from VPC CIDR.
+            allowAllIngress: props.environment !== Environment.PROD,
         });
     }
 }
