@@ -1,8 +1,154 @@
 import { Stack, StackProps } from "aws-cdk-lib";
+import { Secret as EcsSecret, ICluster } from "aws-cdk-lib/aws-ecs";
+import { ApplicationLoadBalancer } from "aws-cdk-lib/aws-elasticloadbalancingv2";
+import { IHostedZone } from "aws-cdk-lib/aws-route53";
+import { ISecret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
+import {
+    COMPETENCY_GATEWAY_IMAGE_REPOSITORY,
+    COMPETENCY_SERVICE_IMAGE_REPOSITORY,
+    SECURED_AUTH_ISSUER,
+    SECURED_AUTH_SERVICE_IMAGE_REPOSITORY,
+} from "../constants";
+import { EcsService } from "../constructs/ecs-service";
+import { getCompetencyRuntimeConfig } from "../shared/competency-config";
+import {
+    buildCoralogixOtelEnv,
+    getSubsystemNameFromRepository,
+} from "../shared/coralogix";
+import { getRegionShortName } from "../shared/names";
+import { Environment, getEnvironmentName } from "../shared/types";
+
+export interface CompetencyStackProps extends StackProps {
+    readonly environment: Environment;
+    readonly cluster: ICluster;
+    readonly dockerHubSecret: ISecret;
+    readonly sharedAlb: ApplicationLoadBalancer;
+    readonly hostedZones: Record<string, IHostedZone>;
+    readonly competencyGatewayHostName: string;
+    readonly competencySecret: ISecret;
+    readonly coralogixSecret: ISecret;
+    readonly sendGridSecret: ISecret;
+    readonly mongoConnectionSecret: ISecret;
+}
 
 export class CompetencyStack extends Stack {
-    constructor(scope: Construct, id: string, props?: StackProps) {
+    constructor(scope: Construct, id: string, props: CompetencyStackProps) {
         super(scope, id, props);
+
+        const competencyConfig = getCompetencyRuntimeConfig(props.environment);
+        const regionShortName = getRegionShortName(Stack.of(this).region);
+        const nodeEnv = getEnvironmentName(props.environment);
+        const imageTag = props.environment === Environment.STAGING ? "staging" : "latest";
+        const withTag = (repository: string): string => `${repository}:${imageTag}`;
+        const serviceName = (name: string): string => `${props.environment}-${name}-${regionShortName}`;
+        const serviceConnectUri = (name: string): string => `http://${name}:3000`;
+        const ecsServiceUri = (service: EcsService): string => serviceConnectUri(service.serviceConnectName);
+
+        const securedAuthImage = withTag(SECURED_AUTH_SERVICE_IMAGE_REPOSITORY);
+        const competencyApiImage = withTag(COMPETENCY_SERVICE_IMAGE_REPOSITORY);
+        const competencyGatewayImage = withTag(COMPETENCY_GATEWAY_IMAGE_REPOSITORY);
+
+        const coralogixAppName = `competency-${nodeEnv}`;
+        const securedAuthSubsystem = getSubsystemNameFromRepository(securedAuthImage);
+        const competencyApiSubsystem = getSubsystemNameFromRepository(competencyApiImage);
+        const competencyGatewaySubsystem = getSubsystemNameFromRepository(competencyGatewayImage);
+
+        const coralogixSecrets = {
+            CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret, "CORALOGIX_PRIVATE_KEY"),
+            OTEL_EXPORTER_OTLP_HEADERS: EcsSecret.fromSecretsManager(props.coralogixSecret, "OTEL_EXPORTER_OTLP_HEADERS"),
+        };
+        const mongoDbUriSecret = EcsSecret.fromSecretsManager(props.mongoConnectionSecret, "MONGODB_URI");
+
+        const defaultServiceProps = {
+            environment: props.environment,
+            dockerCredentials: props.dockerHubSecret,
+            cluster: props.cluster,
+        };
+
+        const securedAuthService = new EcsService(this, "SecuredAuthService", {
+            ...defaultServiceProps,
+            imageRepository: securedAuthImage,
+            containerOptions: {
+                environment: {
+                    PORT: "3000",
+                    GATEWAY_URI: competencyConfig.gatewayUri,
+                    CLIENT_URI: competencyConfig.clientUri,
+                    CARD_API: competencyConfig.clarkGatewayUri,
+                    DB_NAME: "secured-auth",
+                    NODE_ENV: nodeEnv,
+                    OTEL_SERVICE_NAME: serviceName("secured-auth-service"),
+                    ISSUER: SECURED_AUTH_ISSUER,
+                    ...buildCoralogixOtelEnv(coralogixAppName, securedAuthSubsystem),
+                },
+                secrets: {
+                    AWS_API_KEY_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "AWS_API_KEY_SECRET"),
+                    AWS_JWT_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "AWS_JWT_SECRET"),
+                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "AWS_SERVICE_KEY_SECRET"),
+                    OTA_CODE_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "OTA_CODE_SECRET"),
+                    DB_URI: mongoDbUriSecret,
+                    SENDGRID_API_KEY: EcsSecret.fromSecretsManager(props.sendGridSecret, "SENDGRID_API_KEY"),
+                    ...coralogixSecrets,
+                },
+            },
+        });
+
+        const competencyApiService = new EcsService(this, "CompetencyApiService", {
+            ...defaultServiceProps,
+            imageRepository: competencyApiImage,
+            containerOptions: {
+                environment: {
+                    PORT: "3000",
+                    PDP_URI: ecsServiceUri(securedAuthService),
+                    WF_FRAMEWORK_DB_NAME: "wf-frameworks",
+                    NICE_DB_NAME: "nice-framework",
+                    DCWF_DB_NAME: "dcwf-db",
+                    COMP_DB_NAME: "competency-api",
+                    NODE_ENV: nodeEnv,
+                    OTEL_SERVICE_NAME: serviceName("competency-api"),
+                    ...buildCoralogixOtelEnv(coralogixAppName, competencyApiSubsystem),
+                },
+                secrets: {
+                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "AWS_SERVICE_KEY_SECRET"),
+                    DB_URI: mongoDbUriSecret,
+                    ...coralogixSecrets,
+                },
+            },
+        });
+
+        const hostedZone = this.getHostedZone(props, props.competencyGatewayHostName);
+        new EcsService(this, "CompetencyGatewayService", {
+            ...defaultServiceProps,
+            imageRepository: competencyGatewayImage,
+            albRouting: {
+                loadBalancer: props.sharedAlb,
+                hostName: props.competencyGatewayHostName,
+                hostedZone,
+            },
+            containerOptions: {
+                environment: {
+                    PORT: "3000",
+                    PDP_URI: ecsServiceUri(securedAuthService),
+                    COMPETENCY_API_URI: ecsServiceUri(competencyApiService),
+                    LAMBDA_URI: competencyConfig.lambdaUri,
+                    NODE_ENV: nodeEnv,
+                    OTEL_SERVICE_NAME: serviceName("competency-gateway"),
+                    ...buildCoralogixOtelEnv(coralogixAppName, competencyGatewaySubsystem),
+                },
+                secrets: {
+                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "AWS_SERVICE_KEY_SECRET"),
+                    ...coralogixSecrets,
+                },
+            },
+        });
+    }
+
+    private getHostedZone(props: CompetencyStackProps, hostName: string): IHostedZone {
+        const matchingZone = Object.values(props.hostedZones).find((zone) => hostName.endsWith(zone.zoneName));
+        if (!matchingZone) {
+            throw new Error(`No hosted zone found for host name ${hostName}`);
+        }
+
+        return matchingZone;
     }
 }

@@ -54,6 +54,7 @@ export class MongoAtlasStack extends Stack {
             projectId: this.project.projectId,
             clusterName: `${this.baseName}-cluster-${this.regionShortName}`,
             flex: props.environment !== Environment.PROD,
+            instanceSize: props.environment === Environment.PROD ? "M10" : undefined,
             tags: [
                 { key: ENVIRONMENT_TAG, value: getEnvironmentName(props.environment) },
             ],

@@ -1,3 +1,7 @@
+import { ValidationError } from "aws-cdk-lib";
+import { lit } from "aws-cdk-lib/core/lib/helpers-internal";
+import { Construct } from "constructs";
+
 /**
  * Gets the short name for a given AWS region.
  * @param region The AWS region (e.g., "us-east-1").
@@ -32,4 +36,29 @@ export function getAtlasRegionName(region: string): string {
         default:
             throw new Error(`Unsupported region: ${region}`);
     }
+}
+
+export function getImageName(imageRepository: string, scope: Construct): string {
+    const imageWithTag = imageRepository.split("/").pop();
+    const imageName = imageWithTag?.split(":")[0];
+
+    if (!imageName) {
+        throw new ValidationError(lit`EcsService`, "imageRepository must include an image name.", scope);
+    }
+
+    return imageName;
+}
+
+export function getRecordName(hostName: string, zoneName: string): string | undefined {
+    const normalizedHost = hostName.endsWith(".") ? hostName.slice(0, -1) : hostName;
+    if (normalizedHost === zoneName) {
+        return undefined;
+    }
+
+    const suffix = `.${zoneName}`;
+    if (normalizedHost.endsWith(suffix)) {
+        return normalizedHost.slice(0, -suffix.length);
+    }
+
+    return normalizedHost;
 }
