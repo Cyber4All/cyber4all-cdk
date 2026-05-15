@@ -1,18 +1,12 @@
 import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret, ICluster } from "aws-cdk-lib/aws-ecs";
 import { EventPattern } from "aws-cdk-lib/aws-events";
-import { IHostedZone } from "aws-cdk-lib/aws-route53";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import {
     AWS_REGION,
-    CLARK_BUNDLING_SERVICE_IMAGE_REPOSITORY,
-    CLARK_GATEWAY_IMAGE_REPOSITORY,
     CLARK_ISSUER,
-    CLARK_SERVICE_IMAGE_REPOSITORY,
     CORALOGIX_LOG_URL,
-    HIERARCHY_SERVICE_IMAGE_REPOSITORY,
-    STANDARD_GUIDELINES_IMAGE_REPOSITORY,
 } from "../constants";
 import { EcsService, EventDrivenEcsTask } from "../constructs/ecs-service";
 import { SharedAlb } from "../constructs/shared-alb";
@@ -23,9 +17,10 @@ import { Environment, getEnvironmentName } from "../shared/types";
 export interface ClarkStackProps extends StackProps {
     readonly environment: Environment;
     readonly cluster: ICluster;
-    readonly dockerHubSecret: ISecret;
     readonly sharedAlb: SharedAlb;
-    readonly clarkGatewayHostName: string;
+
+    // TODO: Find a cleaner way to pass all these secrets without having to add them to the props interface
+    readonly dockerHubSecret: ISecret;
     readonly googleSecret: ISecret;
     readonly sendGridSecret: ISecret;
     readonly shortcutSecret: ISecret;
@@ -39,14 +34,7 @@ export class ClarkStack extends Stack {
 
         const clarkConfig = getClarkRuntimeConfig(props.environment);
         const nodeEnv = getEnvironmentName(props.environment);
-        const imageTag = props.environment === Environment.STAGING ? "staging" : "latest";
-        const withTag = (repository: string): string => `${repository}:${imageTag}`;
-
-        const standardGuidelinesImage = withTag(STANDARD_GUIDELINES_IMAGE_REPOSITORY);
-        const clarkServiceImage = withTag(CLARK_SERVICE_IMAGE_REPOSITORY);
-        const hierarchyServiceImage = withTag(HIERARCHY_SERVICE_IMAGE_REPOSITORY);
-        const clarkGatewayImage = withTag(CLARK_GATEWAY_IMAGE_REPOSITORY);
-        const clarkBundlingImage = withTag(CLARK_BUNDLING_SERVICE_IMAGE_REPOSITORY);
+        const tag = props.environment === Environment.STAGING ? "staging" : "latest";
 
         const secretBaseName = `/${props.environment}/cyber4all`;
         const clarkSecret = new Secret(this, "ClarkSecret", {
@@ -69,7 +57,7 @@ export class ClarkStack extends Stack {
 
         const standardGuidelinesService = new EcsService(this, "StandardGuidelinesService", {
             ...defaultServiceProps,
-            imageRepository: standardGuidelinesImage,
+            imageRepository: `cyber4all/standard-guidelines:${tag}`,
             containerOptions: {
                 environment: {
                     PORT: "3000",
@@ -91,7 +79,7 @@ export class ClarkStack extends Stack {
 
         const clarkService = new EcsService(this, "ClarkService", {
             ...defaultServiceProps,
-            imageRepository: clarkServiceImage,
+            imageRepository: `cyber4all/clark-service:${tag}`,
             containerOptions: {
                 environment: {
                     PORT: "3000",
@@ -133,7 +121,7 @@ export class ClarkStack extends Stack {
 
         const hierarchyService = new EcsService(this, "HierarchyService", {
             ...defaultServiceProps,
-            imageRepository: hierarchyServiceImage,
+            imageRepository: `cyber4all/hierarchy-service:${tag}`,
             containerOptions: {
                 environment: {
                     PORT: "3000",
@@ -146,14 +134,12 @@ export class ClarkStack extends Stack {
                 },
             },
         });
-        const hostedZone = this.getHostedZone(props, props.clarkGatewayHostName);
         new EcsService(this, "ClarkGatewayService", {
             ...defaultServiceProps,
-            imageRepository: clarkGatewayImage,
+            imageRepository: `cyber4all/clark-gateway:${tag}`,
             albRouting: {
-                loadBalancer: props.sharedAlb.loadBalancer,
-                hostName: props.clarkGatewayHostName,
-                hostedZone,
+                loadBalancer: props.sharedAlb,
+                hostName: `api.${clarkConfig.clarkDomain}`,
             },
             containerOptions: {
                 environment: {
@@ -181,7 +167,7 @@ export class ClarkStack extends Stack {
 
         new EventDrivenEcsTask(this, "ClarkBundlingService", {
             environment: props.environment,
-            imageRepository: clarkBundlingImage,
+            imageRepository: `cyber4all/clark-bundling-service:${tag}`,
             dockerCredentials: props.dockerHubSecret,
             cluster: props.cluster,
             eventPattern,
@@ -197,14 +183,5 @@ export class ClarkStack extends Stack {
                 },
             },
         });
-    }
-
-    private getHostedZone(props: ClarkStackProps, hostName: string): IHostedZone {
-        const matchingZone = Object.values(props.sharedAlb.hostedZones).find((zone) => hostName.endsWith(zone.zoneName));
-        if (!matchingZone) {
-            throw new Error(`No hosted zone found for host name ${hostName}`);
-        }
-
-        return matchingZone;
     }
 }

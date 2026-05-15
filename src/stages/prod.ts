@@ -18,8 +18,10 @@ export class ProdStage extends Stage {
 
         const commonProps = { environment: Environment.PROD };
 
-        const vpcStack = new VpcStack(this, "VpcStack", { ...commonProps, domainName: CLARK_DOMAIN_NAME });
+        const vpcStack = new VpcStack(this, "VpcStack", { ...commonProps });
+
         const mongoAtlasStack = new MongoAtlasStack(this, "MongoAtlasStack", { ...commonProps, vpc: vpcStack.vpc });
+
         const sharedPlatformStack = new SharedPlatformStack(this, "SharedPlatformStack", {
             ...commonProps,
             vpc: vpcStack.vpc,

@@ -1,6 +1,5 @@
 import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret, ICluster } from "aws-cdk-lib/aws-ecs";
-import { IHostedZone } from "aws-cdk-lib/aws-route53";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import {
@@ -18,9 +17,10 @@ import { Environment, getEnvironmentName } from "../shared/types";
 export interface CompetencyStackProps extends StackProps {
     readonly environment: Environment;
     readonly cluster: ICluster;
-    readonly dockerHubSecret: ISecret;
     readonly sharedAlb: SharedAlb;
-    readonly competencyGatewayHostName: string;
+
+    // TODO: Find a cleaner way to pass all these secrets without having to add them to the props interface
+    readonly dockerHubSecret: ISecret;
     readonly sendGridSecret: ISecret;
     readonly mongoConnectionSecret: ISecret;
 }
@@ -97,14 +97,12 @@ export class CompetencyStack extends Stack {
             },
         });
 
-        const hostedZone = this.getHostedZone(props, props.competencyGatewayHostName);
         new EcsService(this, "CompetencyGatewayService", {
             ...defaultServiceProps,
             imageRepository: competencyGatewayImage,
             albRouting: {
-                loadBalancer: props.sharedAlb.loadBalancer,
-                hostName: props.competencyGatewayHostName,
-                hostedZone,
+                loadBalancer: props.sharedAlb,
+                hostName: `api.${competencyConfig.competencyDomain}`,
             },
             containerOptions: {
                 environment: {
@@ -119,14 +117,5 @@ export class CompetencyStack extends Stack {
                 },
             },
         });
-    }
-
-    private getHostedZone(props: CompetencyStackProps, hostName: string): IHostedZone {
-        const matchingZone = Object.values(props.sharedAlb.hostedZones).find((zone) => hostName.endsWith(zone.zoneName));
-        if (!matchingZone) {
-            throw new Error(`No hosted zone found for host name ${hostName}`);
-        }
-
-        return matchingZone;
     }
 }

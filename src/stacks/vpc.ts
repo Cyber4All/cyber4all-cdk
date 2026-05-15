@@ -1,7 +1,7 @@
 import { RemovalPolicy, Stack, StackProps, Tags } from "aws-cdk-lib";
 import { FlowLogDestination, IpAddresses, IVpc, Vpc } from "aws-cdk-lib/aws-ec2";
 import { ILogGroup, LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
-import { HostedZone, IHostedZone } from "aws-cdk-lib/aws-route53";
+import { IHostedZone } from "aws-cdk-lib/aws-route53";
 import { Construct } from "constructs";
 import { getRegionShortName } from "../shared/names";
 import { NAME_TAG } from "../shared/tags";
@@ -9,7 +9,6 @@ import { Environment } from "../shared/types";
 
 export interface VpcStackProps extends StackProps {
     readonly environment: Environment;
-    readonly domainName: string;
 }
 
 export class VpcStack extends Stack {
@@ -52,11 +51,6 @@ export class VpcStack extends Stack {
         this.vpc.privateSubnets.forEach((subnet) => {
             const availabilityZone = subnet.availabilityZone.split("-").at(-1)?.at(1);
             Tags.of(subnet).add(NAME_TAG, `${this.baseName}-private-subnet-${this.regionShortName}${availabilityZone}`);
-        });
-
-        // Import the Route53 hosted zone for the domain
-        this.hostedZone = HostedZone.fromLookup(this, "HostedZone", {
-            domainName: props.domainName
         });
     }
 }
