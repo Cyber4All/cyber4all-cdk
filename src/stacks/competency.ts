@@ -12,11 +12,6 @@ import {
 import { EcsService } from "../constructs/ecs-service";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getCompetencyRuntimeConfig } from "../shared/competency-config";
-import {
-    buildCoralogixOtelEnv,
-    getSubsystemNameFromRepository,
-} from "../shared/coralogix";
-import { getRegionShortName } from "../shared/names";
 import { Environment, getEnvironmentName } from "../shared/types";
 
 export interface CompetencyStackProps extends StackProps {
@@ -34,22 +29,15 @@ export class CompetencyStack extends Stack {
         super(scope, id, props);
 
         const competencyConfig = getCompetencyRuntimeConfig(props.environment);
-        const regionShortName = getRegionShortName(Stack.of(this).region);
         const nodeEnv = getEnvironmentName(props.environment);
         const imageTag = props.environment === Environment.STAGING ? "staging" : "latest";
         const withTag = (repository: string): string => `${repository}:${imageTag}`;
-        const serviceName = (name: string): string => `${props.environment}-${name}-${regionShortName}`;
         const serviceConnectUri = (name: string): string => `http://${name}:3000`;
         const ecsServiceUri = (service: EcsService): string => serviceConnectUri(service.serviceConnectName);
 
         const securedAuthImage = withTag(SECURED_AUTH_SERVICE_IMAGE_REPOSITORY);
         const competencyApiImage = withTag(COMPETENCY_SERVICE_IMAGE_REPOSITORY);
         const competencyGatewayImage = withTag(COMPETENCY_GATEWAY_IMAGE_REPOSITORY);
-
-        const coralogixAppName = `competency-${nodeEnv}`;
-        const securedAuthSubsystem = getSubsystemNameFromRepository(securedAuthImage);
-        const competencyApiSubsystem = getSubsystemNameFromRepository(competencyApiImage);
-        const competencyGatewaySubsystem = getSubsystemNameFromRepository(competencyGatewayImage);
 
         const secretBaseName = `/${props.environment}/cyber4all`;
         const competencySecret = new Secret(this, "CompetencySecret", {
@@ -77,9 +65,7 @@ export class CompetencyStack extends Stack {
                     CARD_API: competencyConfig.clarkGatewayUri,
                     DB_NAME: "secured-auth",
                     NODE_ENV: nodeEnv,
-                    OTEL_SERVICE_NAME: serviceName("secured-auth-service"),
                     ISSUER: SECURED_AUTH_ISSUER,
-                    ...buildCoralogixOtelEnv(coralogixAppName, securedAuthSubsystem),
                 },
                 secrets: {
                     AWS_API_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_API_KEY_SECRET"),
@@ -104,8 +90,6 @@ export class CompetencyStack extends Stack {
                     DCWF_DB_NAME: "dcwf-db",
                     COMP_DB_NAME: "competency-api",
                     NODE_ENV: nodeEnv,
-                    OTEL_SERVICE_NAME: serviceName("competency-api"),
-                    ...buildCoralogixOtelEnv(coralogixAppName, competencyApiSubsystem),
                 },
                 secrets: {
                     AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_SERVICE_KEY_SECRET"),
@@ -130,8 +114,6 @@ export class CompetencyStack extends Stack {
                     COMPETENCY_API_URI: ecsServiceUri(competencyApiService),
                     LAMBDA_URI: competencyConfig.lambdaUri,
                     NODE_ENV: nodeEnv,
-                    OTEL_SERVICE_NAME: serviceName("competency-gateway"),
-                    ...buildCoralogixOtelEnv(coralogixAppName, competencyGatewaySubsystem),
                 },
                 secrets: {
                     AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_SERVICE_KEY_SECRET"),

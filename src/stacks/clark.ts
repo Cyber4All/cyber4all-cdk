@@ -17,11 +17,7 @@ import {
 import { EcsService, EventDrivenEcsTask } from "../constructs/ecs-service";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getClarkRuntimeConfig } from "../shared/clark-config";
-import {
-    buildCoralogixOtelEnv,
-    getSubsystemNameFromRepository,
-} from "../shared/coralogix";
-import { getRegionShortName } from "../shared/names";
+import { getServiceConnectUri } from "../shared/ecs";
 import { Environment, getEnvironmentName } from "../shared/types";
 
 export interface ClarkStackProps extends StackProps {
@@ -41,28 +37,16 @@ export class ClarkStack extends Stack {
     constructor(scope: Construct, id: string, props: ClarkStackProps) {
         super(scope, id, props);
 
-        const envPrefix = props.environment;
         const clarkConfig = getClarkRuntimeConfig(props.environment);
-        const regionShortName = getRegionShortName(Stack.of(this).region);
         const nodeEnv = getEnvironmentName(props.environment);
         const imageTag = props.environment === Environment.STAGING ? "staging" : "latest";
         const withTag = (repository: string): string => `${repository}:${imageTag}`;
-        const coralogixAppName = `clark-${nodeEnv}`;
-        const serviceName = (name: string): string => `${envPrefix}-${name}-${regionShortName}`;
-        const serviceConnectUri = (name: string): string => `http://${name}:3000`;
-        const ecsServiceUri = (service: EcsService): string => serviceConnectUri(service.serviceConnectName);
 
         const standardGuidelinesImage = withTag(STANDARD_GUIDELINES_IMAGE_REPOSITORY);
         const clarkServiceImage = withTag(CLARK_SERVICE_IMAGE_REPOSITORY);
         const hierarchyServiceImage = withTag(HIERARCHY_SERVICE_IMAGE_REPOSITORY);
         const clarkGatewayImage = withTag(CLARK_GATEWAY_IMAGE_REPOSITORY);
         const clarkBundlingImage = withTag(CLARK_BUNDLING_SERVICE_IMAGE_REPOSITORY);
-
-        const standardGuidelinesSubsystem = getSubsystemNameFromRepository(standardGuidelinesImage);
-        const clarkServiceSubsystem = getSubsystemNameFromRepository(clarkServiceImage);
-        const hierarchyServiceSubsystem = getSubsystemNameFromRepository(hierarchyServiceImage);
-        const clarkGatewaySubsystem = getSubsystemNameFromRepository(clarkGatewayImage);
-        const clarkBundlingSubsystem = getSubsystemNameFromRepository(clarkBundlingImage);
 
         const secretBaseName = `/${props.environment}/cyber4all`;
         const clarkSecret = new Secret(this, "ClarkSecret", {
@@ -97,8 +81,6 @@ export class ClarkStack extends Stack {
                     NODE_ENV: nodeEnv,
                     NODE_ENVIRONMENT: nodeEnv,
                     CLARK_DB_NAME: "standard-guidelines",
-                    OTEL_SERVICE_NAME: serviceName("standard-guidelines"),
-                    ...buildCoralogixOtelEnv(coralogixAppName, standardGuidelinesSubsystem),
                 },
                 secrets: {
                     CLARK_DB_URI: mongoDbUriSecret,
@@ -122,17 +104,12 @@ export class ClarkStack extends Stack {
                     CLIENT_COOKIE_DOMAIN: clarkConfig.clientCookieDomain,
                     BUCKET_NAME: clarkConfig.clarkFileUploadsBucketName,
                     CLARK_REPORTS_BUCKET_NAME: clarkConfig.clarkReportsBucketName,
-                    STANDARD_GUIDELINES_SERVICE_URI: ecsServiceUri(standardGuidelinesService),
+                    STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceConnectName),
                     ISSUER: CLARK_ISSUER,
                     NODE_ENV: nodeEnv,
-                    OTEL_SERVICE_NAME: serviceName("clark-service"),
-                    ...buildCoralogixOtelEnv(coralogixAppName, clarkServiceSubsystem),
-                    ...(clarkConfig.knowledgeBaseId ? { KNOWLEDGE_BASE_ID: clarkConfig.knowledgeBaseId } : {}),
                 },
                 secrets: {
-                    AWS_JWT_SECRET: sharedClarkSecret,
-                    CAPTCHA_SECRET: sharedClarkSecret,
-                    SESSION_SECRET: sharedClarkSecret,
+                    SECRET_KEY: sharedClarkSecret,
                     CLARK_DB_URI: mongoDbUriSecret,
                     GOOGLE_CLIENT_ID: EcsSecret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_ID"),
                     GOOGLE_CLIENT_SECRET: EcsSecret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_SECRET"),
@@ -161,9 +138,7 @@ export class ClarkStack extends Stack {
                 environment: {
                     PORT: "3000",
                     JWT_ISSUER: CLARK_ISSUER,
-                    LEARNING_OBJECT_SERVICE_API: ecsServiceUri(clarkService),
-                    OTEL_SERVICE_NAME: serviceName("hierarchy-service"),
-                    ...buildCoralogixOtelEnv(coralogixAppName, hierarchyServiceSubsystem),
+                    LEARNING_OBJECT_SERVICE_API: getServiceConnectUri(clarkService.serviceConnectName),
                 },
                 secrets: {
                     JWT_SECRET: sharedClarkSecret,
@@ -183,14 +158,12 @@ export class ClarkStack extends Stack {
             containerOptions: {
                 environment: {
                     PORT: "3000",
-                    CARD_SERVICE_URI: serviceConnectUri("cards-service"),
-                    CLARK_SERVICE_URI: ecsServiceUri(clarkService),
-                    HIERARCHY_SERVICE_URI: ecsServiceUri(hierarchyService),
-                    STANDARD_GUIDELINES_SERVICE_URI: ecsServiceUri(standardGuidelinesService),
+                    CARD_SERVICE_URI: getServiceConnectUri("cards-service"),
+                    CLARK_SERVICE_URI: getServiceConnectUri(clarkService.serviceConnectName),
+                    HIERARCHY_SERVICE_URI: getServiceConnectUri(hierarchyService.serviceConnectName),
+                    STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceConnectName),
                     ISSUER: CLARK_ISSUER,
                     NODE_ENV: nodeEnv,
-                    OTEL_SERVICE_NAME: serviceName("clark-gateway"),
-                    ...buildCoralogixOtelEnv(coralogixAppName, clarkGatewaySubsystem),
                 },
                 secrets: {
                     AWS_JWT_SECRET: sharedClarkSecret,
@@ -218,8 +191,6 @@ export class ClarkStack extends Stack {
                     BUCKET: clarkConfig.clarkFileUploadsBucketName,
                     CORALOGIX_LOG_URL,
                     GO_ENV: nodeEnv,
-                    OTEL_SERVICE_NAME: serviceName("clark-bundling"),
-                    ...buildCoralogixOtelEnv(coralogixAppName, clarkBundlingSubsystem),
                 },
                 secrets: {
                     DB_URI: mongoDbUriSecret,

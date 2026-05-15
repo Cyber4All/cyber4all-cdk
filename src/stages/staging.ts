@@ -30,7 +30,7 @@ export class StagingStage extends Stage {
 
         new ClarkStack(this, "ClarkStack", {
             ...commonProps,
-            cluster: sharedPlatformStack.cluster,
+            cluster: sharedPlatformStack.cluster.cluster,
             dockerHubSecret: sharedPlatformStack.dockerHubSecret,
             sharedAlb: sharedPlatformStack.sharedAlb,
             clarkGatewayHostName: `clark-gateway.${CLARK_DOMAIN_NAME}`,
@@ -43,7 +43,7 @@ export class StagingStage extends Stage {
 
         new CompetencyStack(this, "CompetencyStack", {
             ...commonProps,
-            cluster: sharedPlatformStack.cluster,
+            cluster: sharedPlatformStack.cluster.cluster,
             dockerHubSecret: sharedPlatformStack.dockerHubSecret,
             sharedAlb: sharedPlatformStack.sharedAlb,
             competencyGatewayHostName: `competency-gateway.${COMPETENCY_DOMAIN_NAME}`,

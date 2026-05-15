@@ -1,176 +1,207 @@
-import { Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, SecretValue, Stack } from "aws-cdk-lib";
 import {
-    AppProtocol,
-    AwsLogDriver,
-    ContainerImage,
-    Ec2Service,
-    Ec2TaskDefinition,
-    Secret as EcsSecret,
-    ICluster,
-    NetworkMode,
-    PropagatedTagSource,
-    Protocol,
+    CfnDaemon,
+    CfnDaemonTaskDefinition
 } from "aws-cdk-lib/aws-ecs";
 import { ManagedPolicy, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import { ILogGroup, LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
-import { IStringParameter, StringParameter } from "aws-cdk-lib/aws-ssm";
 import { Construct } from "constructs";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getRegionShortName } from "../shared/names";
 import { Environment } from "../shared/types";
+import { EcsCluster } from "./ecs-cluster";
 
 const DEFAULT_VERSION = "v0.5.12";
+const DAEMON_BRIDGE_IPV4 = "169.254.172.2";
 
 export interface CoralogixOtelCollectorDaemonProps {
-    readonly cluster: ICluster;
+    readonly cluster: EcsCluster;
     readonly environment: Environment;
-    readonly coralogixDomain: string;
     readonly version?: string;
 }
 
 export class CoralogixOtelCollectorDaemon extends Construct {
-    public readonly taskDefinition: Ec2TaskDefinition;
-    public readonly service: Ec2Service;
+    public readonly taskDefinition: CfnDaemonTaskDefinition;
+    public readonly daemon: CfnDaemon;
     public readonly logGroup: ILogGroup;
     public readonly privateKeySecret: ISecret;
-    public readonly otelConfigParameter: IStringParameter;
+    public readonly otelConfigSecret: ISecret;
 
     constructor(scope: Construct, id: string, props: CoralogixOtelCollectorDaemonProps) {
         super(scope, id);
 
-        const serviceName = "coralogix-otel-agent";
+        const serviceName = "coralogix-otel-collector";
         const stack = Stack.of(this);
         const baseName = `${props.environment}-${serviceName}`;
         const regionShortName = getRegionShortName(stack.region);
         const uniqueSuffix = this.node.addr.substring(0, 8);
         const resourceName = `${baseName}-${regionShortName}-${uniqueSuffix}`;
-        const secretBaseName = `/${props.environment}/cyber4all`;
+        const secretBaseName = `/${props.environment}/cyber4all/coralogix`;
 
         this.privateKeySecret = new Secret(this, "CoralogixPrivateKeySecret", {
-            secretName: `${secretBaseName}/coralogix`,
+            secretName: secretBaseName,
             description: "Coralogix API credentials for log aggregation and analysis.",
             removalPolicy: RemovalPolicy.DESTROY,
         });
-        this.otelConfigParameter = new StringParameter(this, "CoralogixOtelConfig", {
-            parameterName: `${secretBaseName}/coralogix/otel-config`,
-            stringValue: fs.readFileSync(
-                path.join(__dirname, "../../assets/coralogix/otel-config.yaml"),
-                "utf8",
+
+        this.otelConfigSecret = new Secret(this, "CoralogixOtelConfig", {
+            secretName: `${secretBaseName}/otel-config`,
+            secretStringValue: SecretValue.unsafePlainText(
+                fs.readFileSync(
+                    path.join(__dirname, "../../assets/otel-config.yaml"),
+                    "utf8",
+                ),
             ),
+            removalPolicy: RemovalPolicy.DESTROY,
         });
 
         const executionRole = new Role(this, "ExecutionRole", {
             roleName: resourceName,
             assumedBy: new ServicePrincipal("ecs-tasks.amazonaws.com"),
             managedPolicies: [
-                ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonECSTaskExecutionRolePolicy"),
+                ManagedPolicy.fromAwsManagedPolicyName(
+                    "service-role/AmazonECSTaskExecutionRolePolicy",
+                ),
             ],
         });
 
-        this.taskDefinition = new Ec2TaskDefinition(this, "TaskDefinition", {
-            family: resourceName,
-            networkMode: NetworkMode.HOST,
-            executionRole,
-        });
-
-        this.taskDefinition.addVolume({
-            name: "hostfs",
-            host: { sourcePath: "/var/lib/docker" },
-        });
-        this.taskDefinition.addVolume({
-            name: "docker-socket",
-            host: { sourcePath: "/var/run/docker.sock" },
-        });
+        this.privateKeySecret.grantRead(executionRole);
+        this.otelConfigSecret.grantRead(executionRole);
 
         this.logGroup = new LogGroup(this, "LogGroup", {
             logGroupName: `/ecs/daemon/${resourceName}`,
             retention: RetentionDays.ONE_WEEK,
+            removalPolicy: RemovalPolicy.DESTROY,
         });
 
-        const container = this.taskDefinition.addContainer("Collector", {
-            containerName: "coralogix-otel-agent",
-            image: ContainerImage.fromRegistry(`coralogixrepo/coralogix-otel-collector:${props.version ?? DEFAULT_VERSION}`),
-            essential: true,
-            cpu: 256,
-            memoryLimitMiB: 2048,
-            privileged: true,
-            command: ["--config", "env:OTEL_CONFIG"],
-            environment: {
-                CORALOGIX_DOMAIN: props.coralogixDomain,
-                APP_NAME: "OTEL",
-                SUB_SYS: "ECS-EC2",
-                SAMPLING_PERCENTAGE: "10",
-                SAMPLER_MODE: "proportional",
-            },
-            secrets: {
-                PRIVATE_KEY: EcsSecret.fromSecretsManager(this.privateKeySecret, "PRIVATE_KEY"),
-                OTEL_CONFIG: EcsSecret.fromSsmParameter(this.otelConfigParameter),
-            },
-            logging: new AwsLogDriver({
-                streamPrefix: serviceName,
-                logGroup: this.logGroup,
-            }),
-            healthCheck: {
-                command: ["/healthcheck"],
-                interval: Duration.seconds(30),
-                timeout: Duration.seconds(5),
-                retries: 3,
-                startPeriod: Duration.seconds(10),
+        this.taskDefinition = new CfnDaemonTaskDefinition(this, "TaskDefinition", {
+            family: resourceName,
+            cpu: "256",
+            memory: "2048",
+            executionRoleArn: executionRole.roleArn,
+            // Do not specify networkMode. Managed Daemons automatically use daemon_bridge.
+            // App tasks can send OTLP to http://169.254.172.2:4317 or http://169.254.172.2:4318.
+            volumes: [
+                {
+                    name: "hostfs",
+                    host: {
+                        sourcePath: "/var/lib/docker",
+                    },
+                },
+                {
+                    name: "docker-socket",
+                    host: {
+                        sourcePath: "/var/run/docker.sock",
+                    },
+                },
+            ],
+            containerDefinitions: [
+                {
+                    name: "coralogix-otel-agent",
+                    image: `coralogixrepo/coralogix-otel-collector:${props.version ?? DEFAULT_VERSION}`,
+                    essential: true,
+                    cpu: 256,
+                    memory: 2048,
+                    privileged: true,
+                    command: ["--config", "env:OTEL_CONFIG"],
+
+                    environment: [
+                        {
+                            name: "CORALOGIX_DOMAIN",
+                            value: "coralogix.us",
+                        },
+                        {
+                            name: "APP_NAME",
+                            value: "OTEL",
+                        },
+                        {
+                            name: "SUB_SYS",
+                            value: "ECS-EC2",
+                        },
+                        {
+                            name: "SAMPLING_PERCENTAGE",
+                            value: "10",
+                        },
+                        {
+                            name: "SAMPLER_MODE",
+                            value: "proportional",
+                        },
+                    ],
+                    secrets: [
+                        {
+                            name: "PRIVATE_KEY",
+                            valueFrom: `${this.privateKeySecret.secretArn}:PRIVATE_KEY::`,
+                        },
+                        {
+                            name: "OTEL_CONFIG",
+                            valueFrom: this.otelConfigSecret.secretArn,
+                        },
+                    ],
+                    mountPoints: [
+                        {
+                            sourceVolume: "hostfs",
+                            containerPath: "/hostfs/var/lib/docker",
+                            readOnly: true,
+                        },
+                        {
+                            sourceVolume: "docker-socket",
+                            containerPath: "/var/run/docker.sock",
+                            readOnly: false,
+                        },
+                    ],
+                    // Do not add portMappings for Managed Daemons.
+                    // The daemon_bridge network namespace exposes the collector locally at 169.254.172.2:<port>.
+                    // Your collector config should still bind receivers to 0.0.0.0:4317 and 0.0.0.0:4318.
+                    logConfiguration: {
+                        logDriver: "awslogs",
+                        options: {
+                            "awslogs-group": this.logGroup.logGroupName,
+                            "awslogs-region": stack.region,
+                            "awslogs-stream-prefix": serviceName,
+                        },
+                    },
+                    healthCheck: {
+                        command: ["/healthcheck"],
+                        interval: Duration.seconds(30).toSeconds(),
+                        timeout: Duration.seconds(5).toSeconds(),
+                        retries: 3,
+                        startPeriod: Duration.seconds(10).toSeconds(),
+                    },
+                },
+            ],
+        });
+
+        this.taskDefinition.node.addDependency(executionRole);
+        this.taskDefinition.node.addDependency(this.logGroup);
+        this.taskDefinition.node.addDependency(this.privateKeySecret);
+        this.taskDefinition.node.addDependency(this.otelConfigSecret);
+
+        const capactiyProviderName = props.cluster.capacityProvider.capacityProviderName;
+        const capactiyProviderArn = `arn:aws:ecs:${stack.region}:${stack.account}:capacity-provider/${capactiyProviderName}`;
+
+        this.daemon = new CfnDaemon(this, "Daemon", {
+            clusterArn: props.cluster.cluster.clusterArn,
+            daemonName: resourceName,
+            daemonTaskDefinitionArn: this.taskDefinition.attrDaemonTaskDefinitionArn,
+            capacityProviderArns: [capactiyProviderArn],
+            enableEcsManagedTags: true,
+            propagateTags: "DAEMON",
+            deploymentConfiguration: {
+                drainPercent: 100,
+                bakeTimeInMinutes: 5,
             },
         });
 
-        container.addMountPoints(
-            {
-                sourceVolume: "hostfs",
-                containerPath: "/hostfs/var/lib/docker",
-                readOnly: true,
-            },
-            {
-                sourceVolume: "docker-socket",
-                containerPath: "/var/run/docker.sock",
-                readOnly: false,
-            },
-        );
+        this.daemon.node.addDependency(this.taskDefinition);
+    }
 
-        container.addPortMappings(
-            {
-                containerPort: 4317,
-                protocol: Protocol.TCP,
-                appProtocol: AppProtocol.grpc,
-            },
-            {
-                containerPort: 4318,
-                protocol: Protocol.TCP,
-            },
-            {
-                containerPort: 8888,
-                protocol: Protocol.TCP,
-            },
-            {
-                containerPort: 1777,
-                protocol: Protocol.TCP,
-            },
-        );
+    public static getOtlpGrpcEndpoint(): string {
+        return `http://${DAEMON_BRIDGE_IPV4}:4317`;
+    }
 
-        this.privateKeySecret.grantRead(executionRole);
-        this.otelConfigParameter.grantRead(executionRole);
-
-        // App tasks should export OTLP to the container instance IP on 4317/4318 per ECS EC2 daemon pattern.
-        this.service = new Ec2Service(this, "Service", {
-            cluster: props.cluster,
-            serviceName: resourceName,
-            taskDefinition: this.taskDefinition,
-            daemon: true,
-            enableECSManagedTags: true,
-            propagateTags: PropagatedTagSource.SERVICE,
-            maxHealthyPercent: 100,
-            minHealthyPercent: 0,
-            circuitBreaker: {
-                enable: true,
-                rollback: true,
-            },
-        });
+    public static getOtlpHttpEndpoint(): string {
+        return `http://${DAEMON_BRIDGE_IPV4}:4318`;
     }
 }
