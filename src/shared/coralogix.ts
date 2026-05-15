@@ -1,3 +1,16 @@
+/**
+ * TODO: These should be the only things that need to be defined once the applications move away
+ * from the old way of doing OTEL using the coralogix logger and winston and start
+ * using the OTEL libraries directly.
+ * 
+ * OTEL_EXPORTER_OTLP_ENDPOINT=https://ingress.us1.coralogix.com:443
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer send_your_data_key"
+OTEL_RESOURCE_ATTRIBUTES="service.name=nodejs-otel-logs-sample,cx.application.name=AppName,cx.subsystem.name=SubName"
+
+And really the apps should define the OTEL_RESOURCE_ATTRIBUTES themselves.
+ */
+
+
 export const CORALOGIX_OTEL_ENV = {
     OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "grpc",
     OTEL_TRACES_EXPORTER: "otlp",
