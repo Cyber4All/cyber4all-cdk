@@ -1,6 +1,6 @@
 import { RemovalPolicy, Stack, TimeZone, ValidationError } from "aws-cdk-lib";
 import { Schedule } from "aws-cdk-lib/aws-applicationautoscaling";
-import { Peer, Port, SecurityGroup } from "aws-cdk-lib/aws-ec2";
+import { Peer, Port } from "aws-cdk-lib/aws-ec2";
 import {
     AppProtocol,
     AwsLogDriver,
@@ -34,9 +34,6 @@ import { Environment } from "../shared/types";
  * Optional container-level settings for an ECS service or event-driven ECS task.
  */
 export interface ContainerOptions {
-    /** Port exposed by the container. Services default to port 3000 when omitted. */
-    readonly containerPort?: number;
-
     /** Plaintext environment variables passed to the container. */
     readonly environment?: Record<string, string>;
 
@@ -45,6 +42,9 @@ export interface ContainerOptions {
 
     /** Soft memory reservation for the container. Defaults to 256 MiB. */
     readonly memoryReservationMiB?: number;
+
+    /** CPU units reserved for the container. Defaults to 256. */
+    readonly cpu?: number;
 }
 
 /**
@@ -90,8 +90,7 @@ export interface EcsServiceProps {
 export class EcsService extends Construct {
     public readonly taskDefinition: Ec2TaskDefinition;
     public readonly service: Ec2Service;
-    public readonly securityGroup: SecurityGroup;
-    public readonly serviceConnectName: string;
+    public readonly serviceName: string;
 
     private readonly baseName: string;
     private readonly regionShortName: string;
@@ -104,19 +103,16 @@ export class EcsService extends Construct {
         this.regionShortName = getRegionShortName(Stack.of(this).region);
         this.uniqueSuffix = this.node.addr.substring(0, 8);
 
-        const serviceName = getImageName(props.imageRepository, this);
-        this.serviceConnectName = serviceName;
-        const containerPort = props.containerOptions?.containerPort ?? 3000;
-        const resourceName = `${this.baseName}-${serviceName}-${this.regionShortName}-${this.uniqueSuffix}`;
-        const containerName = `${serviceName}-container`;
-        const portMappingName = serviceName;
+        this.serviceName = getImageName(props.imageRepository, this);
+        const resourceName = `${this.baseName}-${this.serviceName}-${this.regionShortName}-${this.uniqueSuffix}`;
+        const containerPort = 3000;
 
         this.taskDefinition = new Ec2TaskDefinition(this, "TaskDefinition", {
             family: resourceName,
         });
 
         const logDriver = new AwsLogDriver({
-            streamPrefix: serviceName,
+            streamPrefix: this.serviceName,
             logGroup: new LogGroup(this, "LogGroup", {
                 logGroupName: `/ecs/service/${resourceName}`,
                 retention: RetentionDays.ONE_WEEK,
@@ -125,26 +121,22 @@ export class EcsService extends Construct {
         });
 
         const container = this.taskDefinition.addContainer("Container", {
-            containerName,
+            containerName: this.serviceName,
             image: ContainerImage.fromRegistry(props.imageRepository, {
                 credentials: props.dockerCredentials,
             }),
             environment: props.containerOptions?.environment,
             secrets: props.containerOptions?.secrets,
+            cpu: props.containerOptions?.cpu ?? 256,
             memoryReservationMiB: props.containerOptions?.memoryReservationMiB ?? 256,
+            memoryLimitMiB: props.containerOptions?.memoryReservationMiB ? props.containerOptions?.memoryReservationMiB + 1024 : 1024,
             logging: logDriver,
         });
 
         container.addPortMappings({
             containerPort,
-            name: portMappingName,
+            name: this.serviceName,
             appProtocol: AppProtocol.http,
-        });
-
-        this.securityGroup = new SecurityGroup(this, "SecurityGroup", {
-            vpc: props.cluster.vpc,
-            securityGroupName: `${resourceName}-sg`,
-            allowAllOutbound: true,
         });
 
         this.service = new Ec2Service(this, "Service", {
@@ -156,14 +148,13 @@ export class EcsService extends Construct {
             serviceConnectConfiguration: {
                 services: [
                     {
-                        portMappingName,
-                        dnsName: this.serviceConnectName,
+                        portMappingName: this.serviceName,
+                        dnsName: this.serviceName,
                         port: containerPort,
                     },
                 ],
             },
         });
-        this.service.connections.addSecurityGroup(this.securityGroup);
 
         const scaling = this.service.autoScaleTaskCount({
             minCapacity: props.environment === Environment.STAGING ? 0 : 1,
@@ -189,7 +180,7 @@ export class EcsService extends Construct {
         }
 
         if (props.albRouting) {
-            this.configureAlbRouting(props, serviceName, containerName, containerPort);
+            this.configureAlbRouting(props, this.serviceName, containerPort);
         } else {
             this.service.connections.allowFrom(
                 Peer.ipv4(props.cluster.vpc.vpcCidrBlock),
@@ -201,7 +192,6 @@ export class EcsService extends Construct {
 
     private configureAlbRouting(
         props: EcsServiceProps,
-        serviceName: string,
         containerName: string,
         containerPort: number,
     ): void {
@@ -219,10 +209,7 @@ export class EcsService extends Construct {
             port: containerPort,
             targetType: TargetType.INSTANCE,
             targets: [
-                this.service.loadBalancerTarget({
-                    containerName,
-                    containerPort,
-                }),
+                this.service.loadBalancerTarget({ containerName, containerPort }),
             ],
         });
 
@@ -313,7 +300,6 @@ export class EventDrivenEcsTask extends Construct {
 
         const taskName = getImageName(props.imageRepository, this);
         const resourceName = `${this.baseName}-${taskName}-${this.regionShortName}-${this.uniqueSuffix}`;
-        const containerName = `${taskName}-container`;
 
         this.taskDefinition = new Ec2TaskDefinition(this, "TaskDefinition", {
             family: resourceName,
@@ -323,8 +309,8 @@ export class EventDrivenEcsTask extends Construct {
             streamPrefix: taskName,
         });
 
-        const container = this.taskDefinition.addContainer("Container", {
-            containerName,
+        this.taskDefinition.addContainer("Container", {
+            containerName: taskName,
             image: ContainerImage.fromRegistry(props.imageRepository, {
                 credentials: props.dockerCredentials,
             }),
@@ -333,12 +319,6 @@ export class EventDrivenEcsTask extends Construct {
             memoryReservationMiB: props.containerOptions?.memoryReservationMiB ?? 256,
             logging: logDriver,
         });
-
-        if (props.containerOptions?.containerPort) {
-            container.addPortMappings({
-                containerPort: props.containerOptions.containerPort,
-            });
-        }
 
         this.eventRule = new Rule(this, "EventRule", {
             eventPattern: props.eventPattern,

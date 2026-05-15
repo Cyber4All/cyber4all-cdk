@@ -13,32 +13,35 @@ type ClarkRuntimeConfig = {
     readonly clarkDomain: string;
 };
 
+export const PROD_CLARK_DOMAIN = "clark.center";
+export const STAGING_CLARK_DOMAIN = "staging.clark.center";
+
 export function getClarkRuntimeConfig(environment: Environment): ClarkRuntimeConfig {
     switch (environment) {
         case Environment.PROD:
             return {
-                clientUri: "https://clark.center",
-                clientCookieDomain: "clark.center",
-                gatewayUri: "https://clark-gateway.clark.center",
-                standardGuidelinesClientUrl: "https://clark-gateway.clark.center",
+                clientUri: `https://${PROD_CLARK_DOMAIN}`,
+                clientCookieDomain: PROD_CLARK_DOMAIN,
+                gatewayUri: `https://api.${PROD_CLARK_DOMAIN}`,
+                standardGuidelinesClientUrl: `https://api.${PROD_CLARK_DOMAIN}`,
                 clarkReportsBucketName: "clark-reports",
                 clarkFileUploadsBucketName: "clark-prod-file-uploads",
                 knowledgeBaseId: "OD56DVFDSD",
                 cognitoIdentityPoolId: "us-east-1:1ad4e60a-9773-4a67-92b5-6cc2c7b3328f",
                 cognitoAdminIdentityPoolId: "us-east-1:6691336e-11a1-48db-9774-5f5a2c8dc270",
-                clarkDomain: "clark.center",
+                clarkDomain: PROD_CLARK_DOMAIN,
             };
         case Environment.STAGING:
             return {
-                clientUri: "https://clarkcenter.yeetbot.click",
-                clientCookieDomain: "yeetbot.click",
-                gatewayUri: "https://clark-gateway.yeetbot.click",
-                standardGuidelinesClientUrl: "https://clark-gateway.yeetbot.click",
+                clientUri: `https://${STAGING_CLARK_DOMAIN}`,
+                clientCookieDomain: STAGING_CLARK_DOMAIN,
+                gatewayUri: `https://api.${STAGING_CLARK_DOMAIN}`,
+                standardGuidelinesClientUrl: `https://api.${STAGING_CLARK_DOMAIN}`,
                 clarkReportsBucketName: "clark-staging-reports",
                 clarkFileUploadsBucketName: "clark-staging-file-uploads",
                 cognitoIdentityPoolId: "us-east-1:3388292f-c48a-4257-aa55-d1816617b38f",
                 cognitoAdminIdentityPoolId: "us-east-1:a265148e-7418-4a40-aee2-78f5ae7cbf43",
-                clarkDomain: "yeetbot.click",
+                clarkDomain: STAGING_CLARK_DOMAIN,
             };
         default:
             throw new Error(`Unsupported environment: ${environment}`);

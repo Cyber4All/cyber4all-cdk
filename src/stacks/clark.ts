@@ -104,7 +104,7 @@ export class ClarkStack extends Stack {
                     CLIENT_COOKIE_DOMAIN: clarkConfig.clientCookieDomain,
                     BUCKET_NAME: clarkConfig.clarkFileUploadsBucketName,
                     CLARK_REPORTS_BUCKET_NAME: clarkConfig.clarkReportsBucketName,
-                    STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceConnectName),
+                    STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceName),
                     ISSUER: CLARK_ISSUER,
                     NODE_ENV: nodeEnv,
                 },
@@ -138,7 +138,7 @@ export class ClarkStack extends Stack {
                 environment: {
                     PORT: "3000",
                     JWT_ISSUER: CLARK_ISSUER,
-                    LEARNING_OBJECT_SERVICE_API: getServiceConnectUri(clarkService.serviceConnectName),
+                    LEARNING_OBJECT_SERVICE_API: getServiceConnectUri(clarkService.serviceName),
                 },
                 secrets: {
                     JWT_SECRET: sharedClarkSecret,
@@ -159,9 +159,9 @@ export class ClarkStack extends Stack {
                 environment: {
                     PORT: "3000",
                     CARD_SERVICE_URI: getServiceConnectUri("cards-service"),
-                    CLARK_SERVICE_URI: getServiceConnectUri(clarkService.serviceConnectName),
-                    HIERARCHY_SERVICE_URI: getServiceConnectUri(hierarchyService.serviceConnectName),
-                    STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceConnectName),
+                    CLARK_SERVICE_URI: getServiceConnectUri(clarkService.serviceName),
+                    HIERARCHY_SERVICE_URI: getServiceConnectUri(hierarchyService.serviceName),
+                    STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceName),
                     ISSUER: CLARK_ISSUER,
                     NODE_ENV: nodeEnv,
                 },

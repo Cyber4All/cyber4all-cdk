@@ -12,6 +12,7 @@ import {
 import { EcsService } from "../constructs/ecs-service";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getCompetencyRuntimeConfig } from "../shared/competency-config";
+import { getServiceConnectUri } from "../shared/ecs";
 import { Environment, getEnvironmentName } from "../shared/types";
 
 export interface CompetencyStackProps extends StackProps {
@@ -32,8 +33,6 @@ export class CompetencyStack extends Stack {
         const nodeEnv = getEnvironmentName(props.environment);
         const imageTag = props.environment === Environment.STAGING ? "staging" : "latest";
         const withTag = (repository: string): string => `${repository}:${imageTag}`;
-        const serviceConnectUri = (name: string): string => `http://${name}:3000`;
-        const ecsServiceUri = (service: EcsService): string => serviceConnectUri(service.serviceConnectName);
 
         const securedAuthImage = withTag(SECURED_AUTH_SERVICE_IMAGE_REPOSITORY);
         const competencyApiImage = withTag(COMPETENCY_SERVICE_IMAGE_REPOSITORY);
@@ -84,7 +83,7 @@ export class CompetencyStack extends Stack {
             containerOptions: {
                 environment: {
                     PORT: "3000",
-                    PDP_URI: ecsServiceUri(securedAuthService),
+                    PDP_URI: getServiceConnectUri(securedAuthService.serviceName),
                     WF_FRAMEWORK_DB_NAME: "wf-frameworks",
                     NICE_DB_NAME: "nice-framework",
                     DCWF_DB_NAME: "dcwf-db",
@@ -110,8 +109,8 @@ export class CompetencyStack extends Stack {
             containerOptions: {
                 environment: {
                     PORT: "3000",
-                    PDP_URI: ecsServiceUri(securedAuthService),
-                    COMPETENCY_API_URI: ecsServiceUri(competencyApiService),
+                    PDP_URI: getServiceConnectUri(securedAuthService.serviceName),
+                    COMPETENCY_API_URI: getServiceConnectUri(competencyApiService.serviceName),
                     LAMBDA_URI: competencyConfig.lambdaUri,
                     NODE_ENV: nodeEnv,
                 },

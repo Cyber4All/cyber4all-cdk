@@ -7,8 +7,12 @@
     "us-east-1e",
     "us-east-1f"
   ],
-  "hosted-zone:account=317620868823:domainName=yeetbot.click:region=us-east-1": {
-    "Id": "/hostedzone/Z08523616RJV1I1558W3",
-    "Name": "yeetbot.click."
+  "hosted-zone:account=317620868823:domainName=staging.clark.center:region=us-east-1": {
+    "Id": "/hostedzone/Z086313734GE8OR9XL3EK",
+    "Name": "staging.clark.center."
+  },
+  "hosted-zone:account=317620868823:domainName=staging.cybercompetencies.com:region=us-east-1": {
+    "Id": "/hostedzone/Z0909758P9Z6EN0EF7BP",
+    "Name": "staging.cybercompetencies.com."
   }
 }
