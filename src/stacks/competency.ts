@@ -1,8 +1,7 @@
-import { Stack, StackProps } from "aws-cdk-lib";
+import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret, ICluster } from "aws-cdk-lib/aws-ecs";
-import { ApplicationLoadBalancer } from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import { IHostedZone } from "aws-cdk-lib/aws-route53";
-import { ISecret } from "aws-cdk-lib/aws-secretsmanager";
+import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import {
     COMPETENCY_GATEWAY_IMAGE_REPOSITORY,
@@ -11,6 +10,7 @@ import {
     SECURED_AUTH_SERVICE_IMAGE_REPOSITORY,
 } from "../constants";
 import { EcsService } from "../constructs/ecs-service";
+import { SharedAlb } from "../constructs/shared-alb";
 import { getCompetencyRuntimeConfig } from "../shared/competency-config";
 import {
     buildCoralogixOtelEnv,
@@ -23,10 +23,8 @@ export interface CompetencyStackProps extends StackProps {
     readonly environment: Environment;
     readonly cluster: ICluster;
     readonly dockerHubSecret: ISecret;
-    readonly sharedAlb: ApplicationLoadBalancer;
-    readonly hostedZones: Record<string, IHostedZone>;
+    readonly sharedAlb: SharedAlb;
     readonly competencyGatewayHostName: string;
-    readonly competencySecret: ISecret;
     readonly coralogixSecret: ISecret;
     readonly sendGridSecret: ISecret;
     readonly mongoConnectionSecret: ISecret;
@@ -53,6 +51,13 @@ export class CompetencyStack extends Stack {
         const securedAuthSubsystem = getSubsystemNameFromRepository(securedAuthImage);
         const competencyApiSubsystem = getSubsystemNameFromRepository(competencyApiImage);
         const competencyGatewaySubsystem = getSubsystemNameFromRepository(competencyGatewayImage);
+
+        const secretBaseName = `/${props.environment}/cyber4all`;
+        const competencySecret = new Secret(this, "CompetencySecret", {
+            secretName: `${secretBaseName}/competency`,
+            description: "Competency service secrets (AWS_API_KEY_SECRET, AWS_JWT_SECRET, AWS_SERVICE_KEY_SECRET, OTA_CODE_SECRET).",
+            removalPolicy: RemovalPolicy.DESTROY,
+        });
 
         const coralogixSecrets = {
             CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret, "CORALOGIX_PRIVATE_KEY"),
@@ -82,10 +87,10 @@ export class CompetencyStack extends Stack {
                     ...buildCoralogixOtelEnv(coralogixAppName, securedAuthSubsystem),
                 },
                 secrets: {
-                    AWS_API_KEY_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "AWS_API_KEY_SECRET"),
-                    AWS_JWT_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "AWS_JWT_SECRET"),
-                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "AWS_SERVICE_KEY_SECRET"),
-                    OTA_CODE_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "OTA_CODE_SECRET"),
+                    AWS_API_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_API_KEY_SECRET"),
+                    AWS_JWT_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_JWT_SECRET"),
+                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_SERVICE_KEY_SECRET"),
+                    OTA_CODE_SECRET: EcsSecret.fromSecretsManager(competencySecret, "OTA_CODE_SECRET"),
                     DB_URI: mongoDbUriSecret,
                     SENDGRID_API_KEY: EcsSecret.fromSecretsManager(props.sendGridSecret, "SENDGRID_API_KEY"),
                     ...coralogixSecrets,
@@ -109,7 +114,7 @@ export class CompetencyStack extends Stack {
                     ...buildCoralogixOtelEnv(coralogixAppName, competencyApiSubsystem),
                 },
                 secrets: {
-                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "AWS_SERVICE_KEY_SECRET"),
+                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_SERVICE_KEY_SECRET"),
                     DB_URI: mongoDbUriSecret,
                     ...coralogixSecrets,
                 },
@@ -121,7 +126,7 @@ export class CompetencyStack extends Stack {
             ...defaultServiceProps,
             imageRepository: competencyGatewayImage,
             albRouting: {
-                loadBalancer: props.sharedAlb,
+                loadBalancer: props.sharedAlb.loadBalancer,
                 hostName: props.competencyGatewayHostName,
                 hostedZone,
             },
@@ -136,7 +141,7 @@ export class CompetencyStack extends Stack {
                     ...buildCoralogixOtelEnv(coralogixAppName, competencyGatewaySubsystem),
                 },
                 secrets: {
-                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(props.competencySecret, "AWS_SERVICE_KEY_SECRET"),
+                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_SERVICE_KEY_SECRET"),
                     ...coralogixSecrets,
                 },
             },
@@ -144,7 +149,7 @@ export class CompetencyStack extends Stack {
     }
 
     private getHostedZone(props: CompetencyStackProps, hostName: string): IHostedZone {
-        const matchingZone = Object.values(props.hostedZones).find((zone) => hostName.endsWith(zone.zoneName));
+        const matchingZone = Object.values(props.sharedAlb.hostedZones).find((zone) => hostName.endsWith(zone.zoneName));
         if (!matchingZone) {
             throw new Error(`No hosted zone found for host name ${hostName}`);
         }

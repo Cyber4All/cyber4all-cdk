@@ -1,9 +1,8 @@
-import { Stack, StackProps } from "aws-cdk-lib";
+import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret, ICluster } from "aws-cdk-lib/aws-ecs";
-import { ApplicationLoadBalancer } from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import { EventPattern } from "aws-cdk-lib/aws-events";
 import { IHostedZone } from "aws-cdk-lib/aws-route53";
-import { ISecret } from "aws-cdk-lib/aws-secretsmanager";
+import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import {
     AWS_REGION,
@@ -16,6 +15,7 @@ import {
     STANDARD_GUIDELINES_IMAGE_REPOSITORY,
 } from "../constants";
 import { EcsService, EventDrivenEcsTask } from "../constructs/ecs-service";
+import { SharedAlb } from "../constructs/shared-alb";
 import { getClarkRuntimeConfig } from "../shared/clark-config";
 import {
     buildCoralogixOtelEnv,
@@ -28,10 +28,8 @@ export interface ClarkStackProps extends StackProps {
     readonly environment: Environment;
     readonly cluster: ICluster;
     readonly dockerHubSecret: ISecret;
-    readonly sharedAlb: ApplicationLoadBalancer;
-    readonly hostedZones: Record<string, IHostedZone>;
+    readonly sharedAlb: SharedAlb;
     readonly clarkGatewayHostName: string;
-    readonly clarkSecret: ISecret;
     readonly coralogixSecret: ISecret;
     readonly googleSecret: ISecret;
     readonly sendGridSecret: ISecret;
@@ -77,7 +75,12 @@ export class ClarkStack extends Stack {
                 "OTEL_EXPORTER_OTLP_HEADERS",
             ),
         };
-        const clarkSecret = props.clarkSecret;
+        const secretBaseName = `/${props.environment}/cyber4all`;
+        const clarkSecret = new Secret(this, "ClarkSecret", {
+            secretName: `${secretBaseName}/clark`,
+            description: "Clark service secrets (SECRET_KEY, GITHUB_ACCESS_TOKEN).",
+            removalPolicy: RemovalPolicy.DESTROY,
+        });
         const googleSecret = props.googleSecret;
         const sendGridSecret = props.sendGridSecret;
         const shortcutSecret = props.shortcutSecret;
@@ -188,7 +191,7 @@ export class ClarkStack extends Stack {
             ...defaultServiceProps,
             imageRepository: clarkGatewayImage,
             albRouting: {
-                loadBalancer: props.sharedAlb,
+                loadBalancer: props.sharedAlb.loadBalancer,
                 hostName: props.clarkGatewayHostName,
                 hostedZone,
             },
@@ -244,7 +247,7 @@ export class ClarkStack extends Stack {
     }
 
     private getHostedZone(props: ClarkStackProps, hostName: string): IHostedZone {
-        const matchingZone = Object.values(props.hostedZones).find((zone) => hostName.endsWith(zone.zoneName));
+        const matchingZone = Object.values(props.sharedAlb.hostedZones).find((zone) => hostName.endsWith(zone.zoneName));
         if (!matchingZone) {
             throw new Error(`No hosted zone found for host name ${hostName}`);
         }
