@@ -1,13 +1,11 @@
 import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
-import { Secret as EcsSecret, ICluster } from "aws-cdk-lib/aws-ecs";
+import { Secret as EcsSecret } from "aws-cdk-lib/aws-ecs";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import {
-    COMPETENCY_GATEWAY_IMAGE_REPOSITORY,
-    COMPETENCY_SERVICE_IMAGE_REPOSITORY,
-    SECURED_AUTH_ISSUER,
-    SECURED_AUTH_SERVICE_IMAGE_REPOSITORY,
+    SECURED_AUTH_ISSUER
 } from "../constants";
+import { EcsCluster } from "../constructs/ecs-cluster";
 import { EcsService } from "../constructs/ecs-service";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getCompetencyRuntimeConfig } from "../shared/competency-config";
@@ -16,7 +14,7 @@ import { Environment, getEnvironmentName } from "../shared/types";
 
 export interface CompetencyStackProps extends StackProps {
     readonly environment: Environment;
-    readonly cluster: ICluster;
+    readonly cluster: EcsCluster;
     readonly sharedAlb: SharedAlb;
 
     // TODO: Find a cleaner way to pass all these secrets without having to add them to the props interface
@@ -31,16 +29,10 @@ export class CompetencyStack extends Stack {
 
         const competencyConfig = getCompetencyRuntimeConfig(props.environment);
         const nodeEnv = getEnvironmentName(props.environment);
-        const imageTag = props.environment === Environment.STAGING ? "staging" : "latest";
-        const withTag = (repository: string): string => `${repository}:${imageTag}`;
+        const tag = props.environment === Environment.STAGING ? "staging" : "latest";
 
-        const securedAuthImage = withTag(SECURED_AUTH_SERVICE_IMAGE_REPOSITORY);
-        const competencyApiImage = withTag(COMPETENCY_SERVICE_IMAGE_REPOSITORY);
-        const competencyGatewayImage = withTag(COMPETENCY_GATEWAY_IMAGE_REPOSITORY);
-
-        const secretBaseName = `/${props.environment}/cyber4all`;
         const competencySecret = new Secret(this, "CompetencySecret", {
-            secretName: `${secretBaseName}/competency`,
+            secretName: `/${props.environment}/cyber4all/competency`,
             description: "Competency service secrets (AWS_API_KEY_SECRET, AWS_JWT_SECRET, AWS_SERVICE_KEY_SECRET, OTA_CODE_SECRET).",
             removalPolicy: RemovalPolicy.DESTROY,
         });
@@ -50,12 +42,18 @@ export class CompetencyStack extends Stack {
         const defaultServiceProps = {
             environment: props.environment,
             dockerCredentials: props.dockerHubSecret,
-            cluster: props.cluster,
+            cluster: props.cluster.cluster,
+            capacityProviderStrategies: [
+                {
+                    capacityProvider: props.cluster.capacityProvider.capacityProviderName,
+                    weight: 1,
+                },
+            ],
         };
 
         const securedAuthService = new EcsService(this, "SecuredAuthService", {
             ...defaultServiceProps,
-            imageRepository: securedAuthImage,
+            imageRepository: `cyber4all/secured-auth-service:${tag}`,
             containerOptions: {
                 environment: {
                     PORT: "3000",
@@ -79,7 +77,7 @@ export class CompetencyStack extends Stack {
 
         const competencyApiService = new EcsService(this, "CompetencyApiService", {
             ...defaultServiceProps,
-            imageRepository: competencyApiImage,
+            imageRepository: `cyber4all/competency-api:${tag}`,
             containerOptions: {
                 environment: {
                     PORT: "3000",
@@ -99,7 +97,7 @@ export class CompetencyStack extends Stack {
 
         new EcsService(this, "CompetencyGatewayService", {
             ...defaultServiceProps,
-            imageRepository: competencyGatewayImage,
+            imageRepository: `cyber4all/competency-gateway:${tag}`,
             albRouting: {
                 loadBalancer: props.sharedAlb,
                 hostName: `api.${competencyConfig.competencyDomain}`,

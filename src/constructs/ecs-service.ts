@@ -4,6 +4,7 @@ import { IVpc } from "aws-cdk-lib/aws-ec2";
 import {
     AppProtocol,
     AwsLogDriver,
+    CapacityProviderStrategy,
     ContainerImage,
     Ec2Service,
     Ec2TaskDefinition,
@@ -73,6 +74,9 @@ export interface EcsServiceProps {
     /** ECS cluster where the service is deployed. */
     readonly cluster: ICluster;
 
+    /** ECS capacity provider strategies. */
+    readonly capacityProviderStrategies?: CapacityProviderStrategy[];
+
     /** Desired number of running service tasks. Defaults to 1. */
     readonly desiredCount?: number;
 
@@ -141,6 +145,7 @@ export class EcsService extends Construct {
             desiredCount: props.desiredCount ?? 1,
             serviceName: resourceName,
             enableECSManagedTags: true,
+            capacityProviderStrategies: props.capacityProviderStrategies,
             serviceConnectConfiguration: {
                 services: [
                     {
@@ -150,6 +155,7 @@ export class EcsService extends Construct {
                     },
                 ],
             },
+
         });
 
         const scaling = this.service.autoScaleTaskCount({

@@ -33,7 +33,6 @@ export class ProdStage extends Stage {
             cluster: sharedPlatformStack.cluster.cluster,
             dockerHubSecret: sharedPlatformStack.dockerHubSecret,
             sharedAlb: sharedPlatformStack.sharedAlb,
-            clarkGatewayHostName: `clark-gateway.${CLARK_DOMAIN_NAME}`,
             googleSecret: sharedPlatformStack.googleSecret,
             sendGridSecret: sharedPlatformStack.sendGridSecret,
             shortcutSecret: sharedPlatformStack.shortcutSecret,
@@ -46,7 +45,6 @@ export class ProdStage extends Stage {
             cluster: sharedPlatformStack.cluster.cluster,
             dockerHubSecret: sharedPlatformStack.dockerHubSecret,
             sharedAlb: sharedPlatformStack.sharedAlb,
-            competencyGatewayHostName: `competency-gateway.${COMPETENCY_DOMAIN_NAME}`,
             sendGridSecret: sharedPlatformStack.sendGridSecret,
             mongoConnectionSecret: mongoAtlasStack.cluster.connectionSecret,
         });

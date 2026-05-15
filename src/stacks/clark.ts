@@ -1,5 +1,5 @@
 import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
-import { Secret as EcsSecret, ICluster } from "aws-cdk-lib/aws-ecs";
+import { Secret as EcsSecret } from "aws-cdk-lib/aws-ecs";
 import { EventPattern } from "aws-cdk-lib/aws-events";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
@@ -8,7 +8,9 @@ import {
     CLARK_ISSUER,
     CORALOGIX_LOG_URL,
 } from "../constants";
-import { EcsService, EventDrivenEcsTask } from "../constructs/ecs-service";
+import { EcsCluster } from "../constructs/ecs-cluster";
+import { EcsService } from "../constructs/ecs-service";
+import { EventDrivenEcsTask } from "../constructs/event-driver-ecs-task";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getClarkRuntimeConfig } from "../shared/clark-config";
 import { getServiceConnectUri } from "../shared/ecs";
@@ -16,7 +18,7 @@ import { Environment, getEnvironmentName } from "../shared/types";
 
 export interface ClarkStackProps extends StackProps {
     readonly environment: Environment;
-    readonly cluster: ICluster;
+    readonly cluster: EcsCluster;
     readonly sharedAlb: SharedAlb;
 
     // TODO: Find a cleaner way to pass all these secrets without having to add them to the props interface
@@ -52,7 +54,13 @@ export class ClarkStack extends Stack {
         const defaultServiceProps = {
             environment: props.environment,
             dockerCredentials: props.dockerHubSecret,
-            cluster: props.cluster,
+            cluster: props.cluster.cluster,
+            capacityProviderStrategies: [
+                {
+                    capacityProvider: props.cluster.capacityProvider.capacityProviderName,
+                    weight: 1,
+                },
+            ],
         };
 
         const standardGuidelinesService = new EcsService(this, "StandardGuidelinesService", {
@@ -134,6 +142,7 @@ export class ClarkStack extends Stack {
                 },
             },
         });
+
         new EcsService(this, "ClarkGatewayService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/clark-gateway:${tag}`,
@@ -169,7 +178,7 @@ export class ClarkStack extends Stack {
             environment: props.environment,
             imageRepository: `cyber4all/clark-bundling-service:${tag}`,
             dockerCredentials: props.dockerHubSecret,
-            cluster: props.cluster,
+            cluster: props.cluster.cluster,
             eventPattern,
             containerOptions: {
                 environment: {
