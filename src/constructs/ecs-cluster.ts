@@ -63,6 +63,26 @@ export class EcsCluster extends Construct {
             EPHEMERAL_PORT_RANGE,
             "Allow ECS managed instances to communicate",
         );
+        this.capacityProviderSecurityGroup.addIngressRule(
+            this.capacityProviderSecurityGroup,
+            Port.tcp(4317),
+            "Allow OTLP gRPC between ECS instances",
+        );
+        this.capacityProviderSecurityGroup.addIngressRule(
+            this.capacityProviderSecurityGroup,
+            Port.tcp(4318),
+            "Allow OTLP HTTP between ECS instances",
+        );
+        this.capacityProviderSecurityGroup.addIngressRule(
+            this.capacityProviderSecurityGroup,
+            Port.tcp(8888),
+            "Allow Prometheus metrics endpoint between ECS instances",
+        );
+        this.capacityProviderSecurityGroup.addIngressRule(
+            this.capacityProviderSecurityGroup,
+            Port.tcp(1777),
+            "Allow pprof between ECS instances",
+        );
 
         const instanceRole = new Role(this, "ManagedInstancesRole", {
             assumedBy: new ServicePrincipal("ec2.amazonaws.com"),

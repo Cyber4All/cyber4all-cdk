@@ -25,7 +25,6 @@ export interface CompetencyStackProps extends StackProps {
     readonly dockerHubSecret: ISecret;
     readonly sharedAlb: SharedAlb;
     readonly competencyGatewayHostName: string;
-    readonly coralogixSecret: ISecret;
     readonly sendGridSecret: ISecret;
     readonly mongoConnectionSecret: ISecret;
 }
@@ -59,10 +58,6 @@ export class CompetencyStack extends Stack {
             removalPolicy: RemovalPolicy.DESTROY,
         });
 
-        const coralogixSecrets = {
-            CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret, "CORALOGIX_PRIVATE_KEY"),
-            OTEL_EXPORTER_OTLP_HEADERS: EcsSecret.fromSecretsManager(props.coralogixSecret, "OTEL_EXPORTER_OTLP_HEADERS"),
-        };
         const mongoDbUriSecret = EcsSecret.fromSecretsManager(props.mongoConnectionSecret, "MONGODB_URI");
 
         const defaultServiceProps = {
@@ -93,7 +88,6 @@ export class CompetencyStack extends Stack {
                     OTA_CODE_SECRET: EcsSecret.fromSecretsManager(competencySecret, "OTA_CODE_SECRET"),
                     DB_URI: mongoDbUriSecret,
                     SENDGRID_API_KEY: EcsSecret.fromSecretsManager(props.sendGridSecret, "SENDGRID_API_KEY"),
-                    ...coralogixSecrets,
                 },
             },
         });
@@ -116,7 +110,6 @@ export class CompetencyStack extends Stack {
                 secrets: {
                     AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_SERVICE_KEY_SECRET"),
                     DB_URI: mongoDbUriSecret,
-                    ...coralogixSecrets,
                 },
             },
         });
@@ -142,7 +135,6 @@ export class CompetencyStack extends Stack {
                 },
                 secrets: {
                     AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_SERVICE_KEY_SECRET"),
-                    ...coralogixSecrets,
                 },
             },
         });

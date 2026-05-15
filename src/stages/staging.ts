@@ -34,7 +34,6 @@ export class StagingStage extends Stage {
             dockerHubSecret: sharedPlatformStack.dockerHubSecret,
             sharedAlb: sharedPlatformStack.sharedAlb,
             clarkGatewayHostName: `clark-gateway.${CLARK_DOMAIN_NAME}`,
-            coralogixSecret: sharedPlatformStack.coralogixSecret,
             googleSecret: sharedPlatformStack.googleSecret,
             sendGridSecret: sharedPlatformStack.sendGridSecret,
             shortcutSecret: sharedPlatformStack.shortcutSecret,
@@ -48,7 +47,6 @@ export class StagingStage extends Stage {
             dockerHubSecret: sharedPlatformStack.dockerHubSecret,
             sharedAlb: sharedPlatformStack.sharedAlb,
             competencyGatewayHostName: `competency-gateway.${COMPETENCY_DOMAIN_NAME}`,
-            coralogixSecret: sharedPlatformStack.coralogixSecret,
             sendGridSecret: sharedPlatformStack.sendGridSecret,
             mongoConnectionSecret: mongoAtlasStack.cluster.connectionSecret,
         });

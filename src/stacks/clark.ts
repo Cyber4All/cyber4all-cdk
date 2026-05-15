@@ -30,7 +30,6 @@ export interface ClarkStackProps extends StackProps {
     readonly dockerHubSecret: ISecret;
     readonly sharedAlb: SharedAlb;
     readonly clarkGatewayHostName: string;
-    readonly coralogixSecret: ISecret;
     readonly googleSecret: ISecret;
     readonly sendGridSecret: ISecret;
     readonly shortcutSecret: ISecret;
@@ -65,16 +64,6 @@ export class ClarkStack extends Stack {
         const clarkGatewaySubsystem = getSubsystemNameFromRepository(clarkGatewayImage);
         const clarkBundlingSubsystem = getSubsystemNameFromRepository(clarkBundlingImage);
 
-        const coralogixSecrets = {
-            CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(
-                props.coralogixSecret,
-                "CORALOGIX_PRIVATE_KEY",
-            ),
-            OTEL_EXPORTER_OTLP_HEADERS: EcsSecret.fromSecretsManager(
-                props.coralogixSecret,
-                "OTEL_EXPORTER_OTLP_HEADERS",
-            ),
-        };
         const secretBaseName = `/${props.environment}/cyber4all`;
         const clarkSecret = new Secret(this, "ClarkSecret", {
             secretName: `${secretBaseName}/clark`,
@@ -114,7 +103,6 @@ export class ClarkStack extends Stack {
                 secrets: {
                     CLARK_DB_URI: mongoDbUriSecret,
                     KEY: sharedClarkSecret,
-                    OTEL_EXPORTER_OTLP_HEADERS: coralogixSecrets.OTEL_EXPORTER_OTLP_HEADERS,
                 },
             },
         });
@@ -146,8 +134,6 @@ export class ClarkStack extends Stack {
                     CAPTCHA_SECRET: sharedClarkSecret,
                     SESSION_SECRET: sharedClarkSecret,
                     CLARK_DB_URI: mongoDbUriSecret,
-                    CORALOGIX_PRIVATE_KEY: coralogixSecrets.CORALOGIX_PRIVATE_KEY,
-                    OTEL_EXPORTER_OTLP_HEADERS: coralogixSecrets.OTEL_EXPORTER_OTLP_HEADERS,
                     GOOGLE_CLIENT_ID: EcsSecret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_ID"),
                     GOOGLE_CLIENT_SECRET: EcsSecret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_SECRET"),
                     GOOGLE_PRIVATE_KEY: EcsSecret.fromSecretsManager(googleSecret, "GOOGLE_PRIVATE_KEY"),
@@ -182,7 +168,6 @@ export class ClarkStack extends Stack {
                 secrets: {
                     JWT_SECRET: sharedClarkSecret,
                     MONGO_DB_URI: mongoDbUriSecret,
-                    OTEL_EXPORTER_OTLP_HEADERS: coralogixSecrets.OTEL_EXPORTER_OTLP_HEADERS,
                 },
             },
         });
@@ -209,7 +194,6 @@ export class ClarkStack extends Stack {
                 },
                 secrets: {
                     AWS_JWT_SECRET: sharedClarkSecret,
-                    ...coralogixSecrets,
                 },
             },
         });
@@ -238,8 +222,6 @@ export class ClarkStack extends Stack {
                     ...buildCoralogixOtelEnv(coralogixAppName, clarkBundlingSubsystem),
                 },
                 secrets: {
-                    CORALOGIX_PRIVATE_KEY: coralogixSecrets.CORALOGIX_PRIVATE_KEY,
-                    OTEL_EXPORTER_OTLP_HEADERS: coralogixSecrets.OTEL_EXPORTER_OTLP_HEADERS,
                     DB_URI: mongoDbUriSecret,
                 },
             },

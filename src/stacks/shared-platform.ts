@@ -3,6 +3,7 @@ import { IVpc } from "aws-cdk-lib/aws-ec2";
 import { Cluster } from "aws-cdk-lib/aws-ecs";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
+import { CoralogixOtelCollectorDaemon } from "../constructs/coralogix-otel-collector-daemon";
 import { EcsCluster } from "../constructs/ecs-cluster";
 import { SharedAlb } from "../constructs/shared-alb";
 import { Environment } from "../shared/types";
@@ -21,7 +22,6 @@ export class SharedPlatformStack extends Stack {
     public readonly googleSecret: ISecret;
     public readonly sendGridSecret: ISecret;
     public readonly shortcutSecret: ISecret;
-    public readonly coralogixSecret: ISecret;
     public readonly slackSecret: ISecret;
 
     constructor(scope: Construct, id: string, props: SharedPlatformStackProps) {
@@ -63,15 +63,17 @@ export class SharedPlatformStack extends Stack {
             description: "Shortcut API credentials for project and task management integration.",
             removalPolicy: RemovalPolicy.DESTROY
         });
-        this.coralogixSecret = new Secret(this, "CoralogixSecret", {
-            secretName: `${secretBaseName}/coralogix`,
-            description: "Coralogix API credentials for log aggregation and analysis.",
-            removalPolicy: RemovalPolicy.DESTROY
-        });
+
         this.slackSecret = new Secret(this, "SlackSecret", {
             secretName: `${secretBaseName}/slack`,
             description: "Slack integration secrets (SLACK_TOKEN, SLACK_URI).",
             removalPolicy: RemovalPolicy.DESTROY
+        });
+
+        new CoralogixOtelCollectorDaemon(this, "CoralogixOtelCollector", {
+            cluster: this.cluster,
+            environment: props.environment,
+            coralogixDomain: "coralogix.us",
         });
     }
 }
