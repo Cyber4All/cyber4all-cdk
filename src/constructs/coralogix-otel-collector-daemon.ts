@@ -1,4 +1,4 @@
-import { Duration, RemovalPolicy, SecretValue, Stack } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import {
     Compatibility,
     ContainerImage,
@@ -7,10 +7,18 @@ import {
     LogDriver,
     NetworkMode,
     PropagatedTagSource,
-    TaskDefinition
+    Protocol,
+    TaskDefinition,
 } from "aws-cdk-lib/aws-ecs";
 import { ManagedPolicy, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import { ILogGroup, LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
+import {
+    BlockPublicAccess,
+    Bucket,
+    BucketEncryption,
+    IBucket,
+} from "aws-cdk-lib/aws-s3";
+import { BucketDeployment, Source } from "aws-cdk-lib/aws-s3-deployment";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import * as fs from "node:fs";
@@ -20,14 +28,13 @@ import { Environment } from "../shared/types";
 import { EcsCluster } from "./ecs-cluster";
 
 const DEFAULT_VERSION = "v0.5.12";
-const DAEMON_BRIDGE_IPV4 = "169.254.172.2";
+const DEFAULT_CONFIG_KEY = "coralogix/coralogix-otel-config.yaml";
 
 export const CORALOGIX_LOG_URL = "https://api.coralogix.us/api/v1/logs";
 
 export interface CoralogixOtelCollectorDaemonProps {
     readonly cluster: EcsCluster;
     readonly environment: Environment;
-    readonly version?: string;
 }
 
 export class CoralogixOtelCollectorDaemon extends Construct {
@@ -35,38 +42,51 @@ export class CoralogixOtelCollectorDaemon extends Construct {
     public readonly daemon: Ec2Service;
     public readonly logGroup: ILogGroup;
     public readonly privateKeySecret: ISecret;
-    public readonly otelConfigSecret: ISecret;
+    public readonly configBucket: IBucket;
 
     constructor(scope: Construct, id: string, props: CoralogixOtelCollectorDaemonProps) {
         super(scope, id);
 
-        const serviceName = "coralogix-otel";
         const stack = Stack.of(this);
-        const baseName = `${props.environment}-${serviceName}`;
         const regionShortName = getRegionShortName(stack.region);
+
+        const logicalServiceName = "coralogix-otel";
+        const resourceBaseName = `${props.environment}-${logicalServiceName}`;
         const uniqueSuffix = this.node.addr.substring(0, 8);
-        const resourceName = `${baseName}-${regionShortName}-${uniqueSuffix}`;
-        const secretBaseName = `/${props.environment}/cyber4all/coralogix`;
+        const resourceName = `${resourceBaseName}-${regionShortName}-${uniqueSuffix}`;
+
+        const configPath = path.join(__dirname, "../../assets/coralogix-otel-config.yaml");
+        const configKey = DEFAULT_CONFIG_KEY;
+
+        const profilingConfigPath = path.join(__dirname, "../../assets/otel-profiling-config.yaml");
+        const profilingConfigKey = "coralogix/otel-profiling-config.yaml";
 
         this.privateKeySecret = new Secret(this, "CoralogixPrivateKeySecret", {
-            secretName: secretBaseName,
-            description: "Coralogix API credentials for log aggregation and analysis.",
+            secretName: `/${props.environment}/cyber4all/coralogix`,
+            description: "Coralogix API credentials for telemetry export.",
             removalPolicy: RemovalPolicy.DESTROY,
         });
 
-        this.otelConfigSecret = new Secret(this, "CoralogixOtelConfig", {
-            secretName: `${secretBaseName}/otel-config`,
-            secretStringValue: SecretValue.unsafePlainText(
-                fs.readFileSync(
-                    path.join(__dirname, "../../assets/otel-config.yaml"),
-                    "utf8",
-                ),
-            ),
+        this.configBucket = new Bucket(this, "ConfigBucket", {
+            bucketName: `${resourceBaseName}-config-${regionShortName}-${uniqueSuffix}`,
+            encryption: BucketEncryption.S3_MANAGED,
+            blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+            enforceSSL: true,
+            autoDeleteObjects: true,
             removalPolicy: RemovalPolicy.DESTROY,
         });
 
-        const executionRole = new Role(this, "ExecutionRole", {
-            roleName: resourceName,
+        const configDeployment = new BucketDeployment(this, "ConfigDeployment", {
+            destinationBucket: this.configBucket,
+            sources: [
+                Source.data(configKey, fs.readFileSync(configPath, "utf8")),
+                Source.data(profilingConfigKey, fs.readFileSync(profilingConfigPath, "utf8")),
+            ],
+            retainOnDelete: false,
+        });
+
+        const taskAndExecutionRole = new Role(this, "Role", {
+            roleName: `${resourceBaseName}-role-${regionShortName}-${uniqueSuffix}`,
             assumedBy: new ServicePrincipal("ecs-tasks.amazonaws.com"),
             managedPolicies: [
                 ManagedPolicy.fromAwsManagedPolicyName(
@@ -75,8 +95,8 @@ export class CoralogixOtelCollectorDaemon extends Construct {
             ],
         });
 
-        this.privateKeySecret.grantRead(executionRole);
-        this.otelConfigSecret.grantRead(executionRole);
+        this.privateKeySecret.grantRead(taskAndExecutionRole);
+        this.configBucket.grantRead(taskAndExecutionRole);
 
         this.logGroup = new LogGroup(this, "LogGroup", {
             logGroupName: `/ecs/daemon/${resourceName}`,
@@ -84,15 +104,16 @@ export class CoralogixOtelCollectorDaemon extends Construct {
             removalPolicy: RemovalPolicy.DESTROY,
         });
 
+        const s3ConfigUrl = `s3://${this.configBucket.bucketName}.s3.${stack.region}.amazonaws.com/${configKey}`;
+
         this.taskDefinition = new TaskDefinition(this, "TaskDefinition", {
             family: resourceName,
             cpu: "256",
             memoryMiB: "2048",
-            executionRole: executionRole,
+            executionRole: taskAndExecutionRole,
+            taskRole: taskAndExecutionRole,
             compatibility: Compatibility.EC2,
             networkMode: NetworkMode.HOST,
-            // Do not specify networkMode. Managed Daemons automatically use daemon_bridge.
-            // App tasks can send OTLP to http://169.254.172.2:4317 or http://169.254.172.2:4318.
             volumes: [
                 {
                     name: "hostfs",
@@ -111,25 +132,25 @@ export class CoralogixOtelCollectorDaemon extends Construct {
 
         const container = this.taskDefinition.addContainer("OtelCollector", {
             containerName: "coralogix-otel-agent",
-            image: ContainerImage.fromRegistry(`coralogixrepo/coralogix-otel-collector:${props.version ?? DEFAULT_VERSION}`),
+            image: ContainerImage.fromRegistry(
+                `coralogixrepo/coralogix-otel-collector:${DEFAULT_VERSION}`,
+            ),
             essential: true,
-            cpu: 256,
+            cpu: 0,
             memoryLimitMiB: 2048,
             privileged: true,
-            command: ["--config", "env:OTEL_CONFIG"],
+            entryPoint: ["sh", "-c"],
+            command: [`exec /cdot --config ${s3ConfigUrl}`],
             environment: {
-                "CORALOGIX_DOMAIN": "coralogix.us",
-                "APP_NAME": "OTEL",
-                "SUB_SYS": "ECS-EC2",
-                "SAMPLING_PERCENTAGE": "10",
-                "SAMPLER_MODE": "proportional",
+                CORALOGIX_DOMAIN: "coralogix.us",
+                MY_POD_IP: "127.0.0.1",
+                CLUSTER_NAME: props.cluster.cluster.clusterName,
             },
             secrets: {
-                "PRIVATE_KEY": EcsSecret.fromSecretsManager(this.privateKeySecret, "PRIVATE_KEY"),
-                "OTEL_CONFIG": EcsSecret.fromSecretsManager(this.otelConfigSecret, "OTEL_CONFIG"),
+                CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(this.privateKeySecret,),
             },
             logging: LogDriver.awsLogs({
-                streamPrefix: serviceName,
+                streamPrefix: logicalServiceName,
                 logGroup: this.logGroup,
             }),
             healthCheck: {
@@ -141,6 +162,29 @@ export class CoralogixOtelCollectorDaemon extends Construct {
             },
         });
 
+        container.addPortMappings(
+            {
+                containerPort: 4317,
+                hostPort: 4317,
+                protocol: Protocol.TCP,
+            },
+            {
+                containerPort: 4318,
+                hostPort: 4318,
+                protocol: Protocol.TCP,
+            },
+            {
+                containerPort: 8888,
+                hostPort: 8888,
+                protocol: Protocol.TCP,
+            },
+            {
+                containerPort: 1777,
+                hostPort: 1777,
+                protocol: Protocol.TCP,
+            },
+        );
+
         container.addMountPoints(
             {
                 sourceVolume: "hostfs",
@@ -151,7 +195,7 @@ export class CoralogixOtelCollectorDaemon extends Construct {
                 sourceVolume: "docker-socket",
                 containerPath: "/var/run/docker.sock",
                 readOnly: false,
-            }
+            },
         );
 
         this.daemon = new Ec2Service(this, "DaemonService", {
@@ -159,16 +203,15 @@ export class CoralogixOtelCollectorDaemon extends Construct {
             cluster: props.cluster.cluster,
             taskDefinition: this.taskDefinition,
             daemon: true,
+            minHealthyPercent: 0,
+            maxHealthyPercent: 100,
+            circuitBreaker: {
+                rollback: true,
+            },
             enableECSManagedTags: true,
             propagateTags: PropagatedTagSource.TASK_DEFINITION,
         });
-    }
 
-    public static getOtlpGrpcEndpoint(): string {
-        return `http://${DAEMON_BRIDGE_IPV4}:4317`;
-    }
-
-    public static getOtlpHttpEndpoint(): string {
-        return `http://${DAEMON_BRIDGE_IPV4}:4318`;
+        this.daemon.node.addDependency(configDeployment);
     }
 }
