@@ -2,9 +2,6 @@ import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret } from "aws-cdk-lib/aws-ecs";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
-import {
-    SECURED_AUTH_ISSUER
-} from "../constants";
 import { EcsCluster } from "../constructs/ecs-cluster";
 import { EcsService } from "../constructs/ecs-service";
 import { SharedAlb } from "../constructs/shared-alb";
@@ -21,6 +18,10 @@ export interface CompetencyStackProps extends StackProps {
     readonly dockerHubSecret: ISecret;
     readonly sendGridSecret: ISecret;
     readonly mongoConnectionSecret: ISecret;
+
+    // TODO: The services need to remove coralogix specific implementations and move to
+    // OTEL since the coralogix implementation is deprecated
+    readonly coralogixSecret: ISecret;
 }
 
 export class CompetencyStack extends Stack {
@@ -62,7 +63,7 @@ export class CompetencyStack extends Stack {
                     CARD_API: competencyConfig.clarkGatewayUri,
                     DB_NAME: "secured-auth",
                     NODE_ENV: nodeEnv,
-                    ISSUER: SECURED_AUTH_ISSUER,
+                    ISSUER: competencyConfig.securedAuthIssuer,
                 },
                 secrets: {
                     AWS_API_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_API_KEY_SECRET"),

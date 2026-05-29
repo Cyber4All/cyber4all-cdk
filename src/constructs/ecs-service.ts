@@ -1,22 +1,23 @@
-import { RemovalPolicy, Stack, TimeZone, ValidationError } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, Stack, TimeZone, ValidationError } from "aws-cdk-lib";
 import { Schedule } from "aws-cdk-lib/aws-applicationautoscaling";
-import { IVpc } from "aws-cdk-lib/aws-ec2";
+import { IVpc, Port } from "aws-cdk-lib/aws-ec2";
 import {
     AppProtocol,
     AwsLogDriver,
     CapacityProviderStrategy,
+    Compatibility,
     ContainerImage,
     Ec2Service,
-    Ec2TaskDefinition,
     Secret as EcsSecret,
     ICluster,
+    NetworkMode,
+    TaskDefinition
 } from "aws-cdk-lib/aws-ecs";
 import {
     ApplicationListenerRule,
     ApplicationProtocol,
     ApplicationTargetGroup,
-    ListenerCondition,
-    TargetType
+    ListenerCondition
 } from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import { ARecord, RecordTarget } from "aws-cdk-lib/aws-route53";
@@ -25,7 +26,6 @@ import { ISecret } from "aws-cdk-lib/aws-secretsmanager";
 import { lit } from "aws-cdk-lib/core/lib/helpers-internal";
 import { Construct } from "constructs";
 import { getHttpsListener, nextListenerRulePriority } from "../shared/alb";
-import { EPHEMERAL_PORT_RANGE } from "../shared/ecs";
 import { getImageName, getRecordName, getRegionShortName } from "../shared/names";
 import { Environment } from "../shared/types";
 import { SharedAlb } from "./shared-alb";
@@ -59,7 +59,7 @@ export interface AlbRoutingOptions {
 }
 
 /**
- * Properties for a long-running EC2-backed ECS service.
+ * Properties for a long-running ECS service backed by managed instances.
  */
 export interface EcsServiceProps {
     /** Deployment environment used in generated resource names. */
@@ -85,10 +85,13 @@ export interface EcsServiceProps {
 
     /** Optional ALB routing for public services. Omit for VPC-only services. */
     readonly albRouting?: AlbRoutingOptions;
+
+    /** Optional whether to enable execute command. */
+    readonly enableExecuteCommand?: boolean;
 }
 
 export class EcsService extends Construct {
-    public readonly taskDefinition: Ec2TaskDefinition;
+    public readonly taskDefinition: TaskDefinition;
     public readonly service: Ec2Service;
     public readonly serviceName: string;
 
@@ -107,8 +110,10 @@ export class EcsService extends Construct {
         const resourceName = `${this.baseName}-${this.serviceName}-${this.regionShortName}-${this.uniqueSuffix}`;
         const containerPort = 3000;
 
-        this.taskDefinition = new Ec2TaskDefinition(this, "TaskDefinition", {
+        this.taskDefinition = new TaskDefinition(this, "TaskDefinition", {
+            compatibility: Compatibility.EC2,
             family: resourceName,
+            networkMode: NetworkMode.BRIDGE,
         });
 
         const logDriver = new AwsLogDriver({
@@ -131,8 +136,14 @@ export class EcsService extends Construct {
             memoryReservationMiB: props.containerOptions?.memoryReservationMiB ?? 256,
             memoryLimitMiB: props.containerOptions?.memoryReservationMiB ? props.containerOptions?.memoryReservationMiB + 1024 : 1024,
             logging: logDriver,
+            healthCheck: {
+                command: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"],
+                interval: Duration.seconds(30),
+                timeout: Duration.seconds(5),
+                retries: 3,
+                startPeriod: Duration.seconds(30),
+            }
         });
-
         container.addPortMappings({
             containerPort,
             name: this.serviceName,
@@ -143,6 +154,7 @@ export class EcsService extends Construct {
             cluster: props.cluster,
             taskDefinition: this.taskDefinition,
             desiredCount: props.desiredCount ?? 1,
+            enableExecuteCommand: props.enableExecuteCommand,
             serviceName: resourceName,
             enableECSManagedTags: true,
             capacityProviderStrategies: props.capacityProviderStrategies,
@@ -155,7 +167,6 @@ export class EcsService extends Construct {
                     },
                 ],
             },
-
         });
 
         const scaling = this.service.autoScaleTaskCount({
@@ -204,7 +215,6 @@ export class EcsService extends Construct {
             vpc: vpc,
             protocol: ApplicationProtocol.HTTP,
             port: containerPort,
-            targetType: TargetType.INSTANCE,
             targets: [
                 this.service.loadBalancerTarget({ containerName, containerPort }),
             ],
@@ -226,9 +236,8 @@ export class EcsService extends Construct {
 
         this.service.connections.allowFrom(
             loadBalancer.loadBalancer,
-            EPHEMERAL_PORT_RANGE,
+            Port.tcp(containerPort),
             "Allow ALB traffic to ECS service",
         );
     }
 }
-

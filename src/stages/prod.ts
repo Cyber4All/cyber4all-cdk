@@ -30,7 +30,7 @@ export class ProdStage extends Stage {
 
         new ClarkStack(this, "ClarkStack", {
             ...commonProps,
-            cluster: sharedPlatformStack.cluster.cluster,
+            cluster: sharedPlatformStack.cluster,
             dockerHubSecret: sharedPlatformStack.dockerHubSecret,
             sharedAlb: sharedPlatformStack.sharedAlb,
             googleSecret: sharedPlatformStack.googleSecret,
@@ -38,15 +38,17 @@ export class ProdStage extends Stage {
             shortcutSecret: sharedPlatformStack.shortcutSecret,
             slackSecret: sharedPlatformStack.slackSecret,
             mongoConnectionSecret: mongoAtlasStack.cluster.connectionSecret,
+            coralogixSecret: sharedPlatformStack.coralogixSecret,
         });
 
         new CompetencyStack(this, "CompetencyStack", {
             ...commonProps,
-            cluster: sharedPlatformStack.cluster.cluster,
+            cluster: sharedPlatformStack.cluster,
             dockerHubSecret: sharedPlatformStack.dockerHubSecret,
             sharedAlb: sharedPlatformStack.sharedAlb,
             sendGridSecret: sharedPlatformStack.sendGridSecret,
             mongoConnectionSecret: mongoAtlasStack.cluster.connectionSecret,
+            coralogixSecret: sharedPlatformStack.coralogixSecret,
         });
     }
 }

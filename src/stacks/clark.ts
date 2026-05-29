@@ -1,16 +1,15 @@
-import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
+import { RemovalPolicy, SecretValue, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret } from "aws-cdk-lib/aws-ecs";
 import { EventPattern } from "aws-cdk-lib/aws-events";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import {
     AWS_REGION,
-    CLARK_ISSUER,
-    CORALOGIX_LOG_URL,
 } from "../constants";
+import { CORALOGIX_LOG_URL } from "../constructs/coralogix-otel-collector-daemon";
 import { EcsCluster } from "../constructs/ecs-cluster";
 import { EcsService } from "../constructs/ecs-service";
-import { EventDrivenEcsTask } from "../constructs/event-driver-ecs-task";
+import { EventDrivenEcsTask } from "../constructs/event-driven-ecs-task";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getClarkRuntimeConfig } from "../shared/clark-config";
 import { getServiceConnectUri } from "../shared/ecs";
@@ -28,6 +27,10 @@ export interface ClarkStackProps extends StackProps {
     readonly shortcutSecret: ISecret;
     readonly slackSecret: ISecret;
     readonly mongoConnectionSecret: ISecret;
+
+    // TODO: The services need to remove coralogix specific implementations and move to
+    // OTEL since the coralogix implementation is deprecated
+    readonly coralogixSecret: ISecret;
 }
 
 export class ClarkStack extends Stack {
@@ -43,6 +46,9 @@ export class ClarkStack extends Stack {
             secretName: `${secretBaseName}/clark`,
             description: "Clark service secrets (SECRET_KEY, GITHUB_ACCESS_TOKEN).",
             removalPolicy: RemovalPolicy.DESTROY,
+            secretObjectValue: {
+                SECRET_KEY: SecretValue.unsafePlainText("placeholder"),
+            },
         });
         const googleSecret = props.googleSecret;
         const sendGridSecret = props.sendGridSecret;
@@ -61,11 +67,12 @@ export class ClarkStack extends Stack {
                     weight: 1,
                 },
             ],
+            enableExecuteCommand: props.environment === Environment.STAGING,
         };
 
         const standardGuidelinesService = new EcsService(this, "StandardGuidelinesService", {
             ...defaultServiceProps,
-            imageRepository: `cyber4all/standard-guidelines:${tag}`,
+            imageRepository: `cyber4all/standard-guidelines-service:${tag}`,
             containerOptions: {
                 environment: {
                     PORT: "3000",
@@ -73,7 +80,7 @@ export class ClarkStack extends Stack {
                     COOKIE_DOMAIN: `.${clarkConfig.clarkDomain}`,
                     GATEWAY_URI: clarkConfig.gatewayUri,
                     CLIENT_URL: clarkConfig.standardGuidelinesClientUrl,
-                    ISSUER: CLARK_ISSUER,
+                    ISSUER: clarkConfig.clarkIssuer,
                     NODE_ENV: nodeEnv,
                     NODE_ENVIRONMENT: nodeEnv,
                     CLARK_DB_NAME: "standard-guidelines",
@@ -81,6 +88,7 @@ export class ClarkStack extends Stack {
                 secrets: {
                     CLARK_DB_URI: mongoDbUriSecret,
                     KEY: sharedClarkSecret,
+                    CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret),
                 },
             },
         });
@@ -101,7 +109,7 @@ export class ClarkStack extends Stack {
                     BUCKET_NAME: clarkConfig.clarkFileUploadsBucketName,
                     CLARK_REPORTS_BUCKET_NAME: clarkConfig.clarkReportsBucketName,
                     STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceName),
-                    ISSUER: CLARK_ISSUER,
+                    ISSUER: clarkConfig.clarkIssuer,
                     NODE_ENV: nodeEnv,
                 },
                 secrets: {
@@ -122,7 +130,6 @@ export class ClarkStack extends Stack {
                     SHORTCUT_API_KEY: EcsSecret.fromSecretsManager(shortcutSecret, "SHORTCUT_API_KEY"),
                     SLACK_TOKEN: EcsSecret.fromSecretsManager(slackSecret, "SLACK_TOKEN"),
                     SLACK_URI: EcsSecret.fromSecretsManager(slackSecret, "SLACK_URI"),
-                    GITHUB_ACCESS_TOKEN: EcsSecret.fromSecretsManager(clarkSecret, "GITHUB_ACCESS_TOKEN"),
                 },
             },
         });
@@ -133,7 +140,7 @@ export class ClarkStack extends Stack {
             containerOptions: {
                 environment: {
                     PORT: "3000",
-                    JWT_ISSUER: CLARK_ISSUER,
+                    JWT_ISSUER: clarkConfig.clarkIssuer,
                     LEARNING_OBJECT_SERVICE_API: getServiceConnectUri(clarkService.serviceName),
                 },
                 secrets: {
@@ -157,11 +164,12 @@ export class ClarkStack extends Stack {
                     CLARK_SERVICE_URI: getServiceConnectUri(clarkService.serviceName),
                     HIERARCHY_SERVICE_URI: getServiceConnectUri(hierarchyService.serviceName),
                     STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceName),
-                    ISSUER: CLARK_ISSUER,
+                    ISSUER: clarkConfig.clarkIssuer,
                     NODE_ENV: nodeEnv,
                 },
                 secrets: {
                     AWS_JWT_SECRET: sharedClarkSecret,
+                    CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret),
                 },
             },
         });

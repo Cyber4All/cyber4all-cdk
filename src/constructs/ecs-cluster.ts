@@ -1,13 +1,13 @@
-import { Size, Stack, Tags } from "aws-cdk-lib";
-import { IConnectable, IVpc, Port, SecurityGroup } from "aws-cdk-lib/aws-ec2";
+import { Stack, Tags } from "aws-cdk-lib";
+import { AutoScalingGroup } from "aws-cdk-lib/aws-autoscaling";
+import { IConnectable, InstanceType, IVpc, Port, SecurityGroup } from "aws-cdk-lib/aws-ec2";
 import {
-    CapacityOptionType,
+    AsgCapacityProvider,
     Cluster,
     ContainerInsights,
-    InstanceMonitoring,
-    ManagedInstancesCapacityProvider,
+    EcsOptimizedImage
 } from "aws-cdk-lib/aws-ecs";
-import { InstanceProfile, ManagedPolicy, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
+import { ManagedPolicy, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
 import { getRegionShortName } from "../shared/names";
 import { NAME_TAG } from "../shared/tags";
@@ -24,7 +24,7 @@ export interface EcsClusterProps {
 
 export class EcsCluster extends Construct {
     public readonly cluster: Cluster;
-    public readonly capacityProvider: ManagedInstancesCapacityProvider;
+    public readonly capacityProvider: AsgCapacityProvider;
     public readonly capacityProviderSecurityGroup: SecurityGroup;
 
     private readonly baseName: string;
@@ -48,90 +48,61 @@ export class EcsCluster extends Construct {
             containerInsightsV2: ContainerInsights.ENABLED,
         });
 
-        this.capacityProviderSecurityGroup = new SecurityGroup(this, "ManagedInstancesSecurityGroup", {
+        this.capacityProviderSecurityGroup = new SecurityGroup(this, "AsgSecurityGroup", {
             vpc: props.vpc,
-            securityGroupName: `${this.baseName}-ecs-managed-sg-${this.regionShortName}-${this.uniqueSuffix}`,
-            description: "Security group for ECS managed instances",
+            securityGroupName: `${this.baseName}-asg-sg-${this.regionShortName}-${this.uniqueSuffix}`,
+            description: "Security group for ASG instances",
             allowAllOutbound: true,
         });
         Tags.of(this.capacityProviderSecurityGroup).add(
             NAME_TAG,
-            `${this.baseName}-ecs-managed-sg-${this.regionShortName}-${this.uniqueSuffix}`,
+            `${this.baseName}-asg-sg-${this.regionShortName}-${this.uniqueSuffix}`,
         );
         this.capacityProviderSecurityGroup.addIngressRule(
             this.capacityProviderSecurityGroup,
             EPHEMERAL_PORT_RANGE,
-            "Allow ECS managed instances to communicate",
+            "Allow ASG instances to communicate",
         );
         this.capacityProviderSecurityGroup.addIngressRule(
             this.capacityProviderSecurityGroup,
             Port.tcp(4317),
-            "Allow OTLP gRPC between ECS instances",
+            "Allow OTLP gRPC between ASG instances",
         );
         this.capacityProviderSecurityGroup.addIngressRule(
             this.capacityProviderSecurityGroup,
             Port.tcp(4318),
-            "Allow OTLP HTTP between ECS instances",
-        );
-        this.capacityProviderSecurityGroup.addIngressRule(
-            this.capacityProviderSecurityGroup,
-            Port.tcp(8888),
-            "Allow Prometheus metrics endpoint between ECS instances",
+            "Allow OTLP HTTP between ASG instances",
         );
         this.capacityProviderSecurityGroup.addIngressRule(
             this.capacityProviderSecurityGroup,
             Port.tcp(1777),
-            "Allow pprof between ECS instances",
+            "Allow pprof between ASG instances",
         );
 
-        const instanceRole = new Role(this, "ManagedInstancesRole", {
+        const role = new Role(this, "AsgInstanceRole", {
+            roleName: `${this.baseName}-asg-instance-role-${this.regionShortName}-${this.uniqueSuffix}`,
             assumedBy: new ServicePrincipal("ec2.amazonaws.com"),
-            managedPolicies: [
-                ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonEC2ContainerServiceforEC2Role"),
-                ManagedPolicy.fromAwsManagedPolicyName("AmazonSSMManagedInstanceCore"),
-            ],
+        });
+        role.addManagedPolicy(ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonEC2ContainerServiceforEC2Role"));
+        role.addManagedPolicy(ManagedPolicy.fromAwsManagedPolicyName("AmazonSSMManagedInstanceCore"));
+
+        const autoScalingGroup = new AutoScalingGroup(this, "AutoScalingGroup", {
+            autoScalingGroupName: `${this.baseName}-asg-${this.regionShortName}-${this.uniqueSuffix}`,
+            vpc: props.vpc,
+            instanceType: new InstanceType("t3.medium"),
+            machineImage: EcsOptimizedImage.amazonLinux2023(),
+            securityGroup: this.capacityProviderSecurityGroup,
+            role,
+            minCapacity: 0,
+            maxCapacity: 5,
         });
 
-        const instanceProfile = new InstanceProfile(this, "ManagedInstancesInstanceProfile", {
-            role: instanceRole,
-            // Requires prefixing the instance profile name with "ecsInstanceRole-" to be recognized by ECS as a valid instance profile for managed instances
-            instanceProfileName: `ecsInstanceRole-${this.baseName}-${this.regionShortName}-${this.uniqueSuffix}`,
+        this.capacityProvider = new AsgCapacityProvider(this, "AsgCapacityProvider", {
+            capacityProviderName: `${this.baseName}-asg-provider-${this.regionShortName}-${this.uniqueSuffix}`,
+            autoScalingGroup,
+
         });
-
-        const infrastructureRole = new Role(this, "ManagedInstancesInfrastructureRole", {
-            roleName: `${this.baseName}-ecs-managed-infra-${this.regionShortName}-${this.uniqueSuffix}`,
-            assumedBy: new ServicePrincipal("ecs.amazonaws.com"),
-            managedPolicies: [
-                ManagedPolicy.fromAwsManagedPolicyName("AmazonECSInfrastructureRolePolicyForManagedInstances"),
-            ],
-        });
-
-        const capacityOptionType =
-            props.environment === Environment.PROD ? CapacityOptionType.ON_DEMAND : CapacityOptionType.SPOT;
-
-        this.capacityProvider = new ManagedInstancesCapacityProvider(this, "ManagedInstancesCapacityProvider", {
-            capacityProviderName: `${this.baseName}-mi-capacity-${this.regionShortName}-${this.uniqueSuffix}`,
-            infrastructureRole,
-            ec2InstanceProfile: instanceProfile,
-            subnets: props.vpc.privateSubnets,
-            securityGroups: [this.capacityProviderSecurityGroup],
-            instanceRequirements: {
-                vCpuCountMin: DEFAULT_MIN_VCPU,
-                memoryMin: Size.mebibytes(DEFAULT_MIN_MEMORY_MIB),
-            },
-            monitoring: InstanceMonitoring.BASIC,
-            capacityOptionType,
-        });
-
-        this.cluster.addManagedInstancesCapacityProvider(this.capacityProvider);
-        // CDK does not mark managed instances as EC2 capacity yet, so flag it explicitly for EC2 services.
-        (this.cluster as unknown as { _hasEc2Capacity: boolean })._hasEc2Capacity = true;
-        this.cluster.addDefaultCapacityProviderStrategy([
-            {
-                capacityProvider: this.capacityProvider.capacityProviderName,
-                weight: 1,
-            },
-        ]);
+        this.cluster.addAsgCapacityProvider(this.capacityProvider);
     }
 
     public allowIngressFromSharedAlb(loadBalancer: IConnectable): void {

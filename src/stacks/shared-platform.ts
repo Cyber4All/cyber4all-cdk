@@ -16,7 +16,7 @@ export interface SharedPlatformStackProps extends StackProps {
 export class SharedPlatformStack extends Stack {
     public readonly cluster: EcsCluster;
     public readonly sharedAlb: SharedAlb;
-
+    public readonly coralogixSecret: ISecret;
     public readonly dockerHubSecret: ISecret;
     public readonly googleSecret: ISecret;
     public readonly sendGridSecret: ISecret;
@@ -74,7 +74,7 @@ export class SharedPlatformStack extends Stack {
             secretName: `${secretBaseName}/shortcut`,
             description: "Shortcut API credentials for project and task management integration.",
             secretObjectValue: {
-                SHORTCUT_API_TOKEN: SecretValue.unsafePlainText("placeholder"),
+                SHORTCUT_API_KEY: SecretValue.unsafePlainText("placeholder"),
             },
             removalPolicy: RemovalPolicy.DESTROY
         });
@@ -88,9 +88,10 @@ export class SharedPlatformStack extends Stack {
             removalPolicy: RemovalPolicy.DESTROY
         });
 
-        new CoralogixOtelCollectorDaemon(this, "CoralogixOtelCollector", {
+        const otelCollector = new CoralogixOtelCollectorDaemon(this, "CoralogixOtelCollector", {
             cluster: this.cluster,
             environment: props.environment,
         });
+        this.coralogixSecret = otelCollector.privateKeySecret;
     }
 }
