@@ -60,9 +60,6 @@ export class MongoDBNetwork extends Construct {
                 profile: this.profile,
                 projectId: props.project.projectId,
                 accessList: [{
-                    // TODO: In the future, if we wanted to restrict based on security group. We could setup a peering
-                    // connection between the VPC and Atlas and then whitelist the security group here instead of allowing
-                    // all ingress from the entire internet.
                     cidrBlock: "0.0.0.0/0",
                     comment: "Allow all ingress traffic for development and testing"
                 }],

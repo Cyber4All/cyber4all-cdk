@@ -13,7 +13,6 @@ export const DEFAULT_MONGODB_CLUSTER_TAGS: Tag[] = [
     { key: MANAGED_BY_TAG, value: "aws-cdk" },
     { key: REPOSITORY_TAG, value: REPOSITORY_TAG_VALUE },
     { key: OWNER_TAG, value: "cyber4all" },
-    { key: APPLICATION_TAG, value: "shared" },
 ];
 
 export const DEFAULT_MONGODB_PROJECT_TAGS: Record<string, string> = {

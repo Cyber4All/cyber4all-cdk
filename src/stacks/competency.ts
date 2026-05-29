@@ -4,6 +4,7 @@ import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import { EcsCluster } from "../constructs/ecs-cluster";
 import { EcsService } from "../constructs/ecs-service";
+import { MongoDBCluster } from "../constructs/mongodb-cluster";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getCompetencyRuntimeConfig } from "../shared/competency-config";
 import { getServiceConnectUri } from "../shared/ecs";
@@ -13,11 +14,12 @@ export interface CompetencyStackProps extends StackProps {
     readonly environment: Environment;
     readonly cluster: EcsCluster;
     readonly sharedAlb: SharedAlb;
+    readonly mongoCluster: MongoDBCluster;
+
 
     // TODO: Find a cleaner way to pass all these secrets without having to add them to the props interface
     readonly dockerHubSecret: ISecret;
     readonly sendGridSecret: ISecret;
-    readonly mongoConnectionSecret: ISecret;
 
     // TODO: The services need to remove coralogix specific implementations and move to
     // OTEL since the coralogix implementation is deprecated
@@ -38,7 +40,7 @@ export class CompetencyStack extends Stack {
             removalPolicy: RemovalPolicy.DESTROY,
         });
 
-        const mongoDbUriSecret = EcsSecret.fromSecretsManager(props.mongoConnectionSecret, "MONGODB_URI");
+        const mongoDbUriSecret = EcsSecret.fromSecretsManager(props.mongoCluster.connectionSecret, "MONGODB_URI");
 
         const defaultServiceProps = {
             environment: props.environment,

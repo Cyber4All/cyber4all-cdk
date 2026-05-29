@@ -37,8 +37,8 @@ export class StagingStage extends Stage {
             sendGridSecret: sharedPlatformStack.sendGridSecret,
             shortcutSecret: sharedPlatformStack.shortcutSecret,
             slackSecret: sharedPlatformStack.slackSecret,
-            mongoConnectionSecret: mongoAtlasStack.cluster.connectionSecret,
             coralogixSecret: sharedPlatformStack.coralogixSecret,
+            mongoCluster: mongoAtlasStack.clarkCluster,
         });
 
         new CompetencyStack(this, "CompetencyStack", {
@@ -47,8 +47,8 @@ export class StagingStage extends Stage {
             dockerHubSecret: sharedPlatformStack.dockerHubSecret,
             sharedAlb: sharedPlatformStack.sharedAlb,
             sendGridSecret: sharedPlatformStack.sendGridSecret,
-            mongoConnectionSecret: mongoAtlasStack.cluster.connectionSecret,
             coralogixSecret: sharedPlatformStack.coralogixSecret,
+            mongoCluster: mongoAtlasStack.competencyCluster,
         });
     }
 }

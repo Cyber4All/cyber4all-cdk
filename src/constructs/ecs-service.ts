@@ -1,4 +1,4 @@
-import { Duration, RemovalPolicy, Stack, TimeZone, ValidationError } from "aws-cdk-lib";
+import { RemovalPolicy, Stack, TimeZone, ValidationError } from "aws-cdk-lib";
 import { Schedule } from "aws-cdk-lib/aws-applicationautoscaling";
 import { IVpc, Port } from "aws-cdk-lib/aws-ec2";
 import {
@@ -19,15 +19,18 @@ import {
     ApplicationTargetGroup,
     ListenerCondition
 } from "aws-cdk-lib/aws-elasticloadbalancingv2";
+import { ManagedPolicy, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import { ARecord, RecordTarget } from "aws-cdk-lib/aws-route53";
 import { LoadBalancerTarget } from "aws-cdk-lib/aws-route53-targets";
 import { ISecret } from "aws-cdk-lib/aws-secretsmanager";
 import { lit } from "aws-cdk-lib/core/lib/helpers-internal";
+import { CfnDatabaseUser, CfnDatabaseUserPropsAwsiamType } from "awscdk-resources-mongodbatlas";
 import { Construct } from "constructs";
 import { getHttpsListener, nextListenerRulePriority } from "../shared/alb";
 import { getImageName, getRecordName, getRegionShortName } from "../shared/names";
 import { Environment } from "../shared/types";
+import { MongoDBCluster } from "./mongodb-cluster";
 import { SharedAlb } from "./shared-alb";
 
 /**
@@ -86,6 +89,9 @@ export interface EcsServiceProps {
     /** Optional ALB routing for public services. Omit for VPC-only services. */
     readonly albRouting?: AlbRoutingOptions;
 
+    /** OptionalThe MongoDB cluster to which the service has access. */
+    readonly mongoCluster?: MongoDBCluster;
+
     /** Optional whether to enable execute command. */
     readonly enableExecuteCommand?: boolean;
 }
@@ -110,10 +116,27 @@ export class EcsService extends Construct {
         const resourceName = `${this.baseName}-${this.serviceName}-${this.regionShortName}-${this.uniqueSuffix}`;
         const containerPort = 3000;
 
+        const executionRole = new Role(this, "ExecutionRole", {
+            roleName: `${this.baseName}-${this.serviceName}-execution-role-${this.regionShortName}-${this.uniqueSuffix}`,
+            assumedBy: new ServicePrincipal("ecs-tasks.amazonaws.com"),
+        });
+        executionRole.addManagedPolicy(ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonECSTaskExecutionRolePolicy"));
+        Object.values(props.containerOptions?.secrets ?? {}).forEach((secret) => {
+            secret.grantRead(executionRole);
+        });
+
+        const taskRoleName = `${this.baseName}-${this.serviceName}-task-role-${this.regionShortName}-${this.uniqueSuffix}`;
+        const taskRole = new Role(this, "TaskRole", {
+            roleName: taskRoleName,
+            assumedBy: new ServicePrincipal("ecs-tasks.amazonaws.com"),
+        });
+
         this.taskDefinition = new TaskDefinition(this, "TaskDefinition", {
             compatibility: Compatibility.EC2,
             family: resourceName,
             networkMode: NetworkMode.BRIDGE,
+            taskRole,
+            executionRole,
         });
 
         const logDriver = new AwsLogDriver({
@@ -136,13 +159,6 @@ export class EcsService extends Construct {
             memoryReservationMiB: props.containerOptions?.memoryReservationMiB ?? 256,
             memoryLimitMiB: props.containerOptions?.memoryReservationMiB ? props.containerOptions?.memoryReservationMiB + 1024 : 1024,
             logging: logDriver,
-            healthCheck: {
-                command: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"],
-                interval: Duration.seconds(30),
-                timeout: Duration.seconds(5),
-                retries: 3,
-                startPeriod: Duration.seconds(30),
-            }
         });
         container.addPortMappings({
             containerPort,
@@ -195,6 +211,10 @@ export class EcsService extends Construct {
         if (props.albRouting) {
             this.configureAlbRouting(props.cluster.vpc, props.albRouting, this.serviceName, containerPort);
         }
+
+        if (props.mongoCluster) {
+            this.configureMongoDbAccess(props.mongoCluster, taskRoleName);
+        }
     }
 
     private configureAlbRouting(
@@ -239,5 +259,23 @@ export class EcsService extends Construct {
             Port.tcp(containerPort),
             "Allow ALB traffic to ECS service",
         );
+    }
+
+    private configureMongoDbAccess(mongoCluster: MongoDBCluster, taskRoleName: string): void {
+        const taskRoleArn = `arn:aws:iam::${Stack.of(this).account}:role/${taskRoleName}`;
+
+        new CfnDatabaseUser(this, "MongoIamDbUser", {
+            projectId: mongoCluster.projectId,
+            username: taskRoleArn,
+            databaseName: "$external",
+            awsiamType: CfnDatabaseUserPropsAwsiamType.ROLE,
+            // TODO: Use more fine-grained permissions for the roles
+            roles: [
+                {
+                    roleName: "readWriteAnyDatabase",
+                    databaseName: "admin",
+                },
+            ],
+        });
     }
 }

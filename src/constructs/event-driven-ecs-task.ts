@@ -7,11 +7,14 @@ import {
 } from "aws-cdk-lib/aws-ecs";
 import { EventPattern, Rule } from "aws-cdk-lib/aws-events";
 import { EcsTask } from "aws-cdk-lib/aws-events-targets";
+import { Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import { ISecret } from "aws-cdk-lib/aws-secretsmanager";
+import { CfnDatabaseUser, CfnDatabaseUserPropsAwsiamType } from "awscdk-resources-mongodbatlas";
 import { Construct } from "constructs";
 import { getImageName, getRegionShortName } from "../shared/names";
 import { Environment } from "../shared/types";
 import { ContainerOptions } from "./ecs-service";
+import { MongoDBCluster } from "./mongodb-cluster";
 /**
  * Properties for an ECS task launched by an EventBridge rule.
  */
@@ -33,6 +36,9 @@ export interface EventDrivenEcsTaskProps {
 
     /** Optional container settings. */
     readonly containerOptions?: ContainerOptions;
+
+    /** Optional MongoDB cluster for the task. */
+    readonly mongoCluster?: MongoDBCluster;
 }
 
 export class EventDrivenEcsTask extends Construct {
@@ -53,8 +59,16 @@ export class EventDrivenEcsTask extends Construct {
         const taskName = getImageName(props.imageRepository, this);
         const resourceName = `${this.baseName}-${taskName}-${this.regionShortName}-${this.uniqueSuffix}`;
 
+
+        const taskRoleName = `${this.baseName}-${taskName}-task-role-${this.regionShortName}-${this.uniqueSuffix}`;
+        const taskRole = new Role(this, "TaskRole", {
+            roleName: taskRoleName,
+            assumedBy: new ServicePrincipal("ecs-tasks.amazonaws.com"),
+        });
+
         this.taskDefinition = new Ec2TaskDefinition(this, "TaskDefinition", {
             family: resourceName,
+            taskRole,
         });
 
         const logDriver = new AwsLogDriver({
@@ -85,5 +99,27 @@ export class EventDrivenEcsTask extends Construct {
                 taskCount: 1,
             }),
         );
+
+        if (props.mongoCluster) {
+            this.configureMongoDbAccess(props.mongoCluster, taskRoleName);
+        }
+    }
+
+    private configureMongoDbAccess(mongoCluster: MongoDBCluster, taskRoleName: string): void {
+        const taskRoleArn = `arn:aws:iam::${Stack.of(this).account}:role/${taskRoleName}`;
+
+        new CfnDatabaseUser(this, "MongoIamDbUser", {
+            projectId: mongoCluster.projectId,
+            username: taskRoleArn,
+            databaseName: "$external",
+            awsiamType: CfnDatabaseUserPropsAwsiamType.ROLE,
+            // TODO: Use more fine-grained permissions for the roles
+            roles: [
+                {
+                    roleName: "readWriteAnyDatabase",
+                    databaseName: "admin",
+                },
+            ],
+        });
     }
 }

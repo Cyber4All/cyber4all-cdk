@@ -10,6 +10,7 @@ import { CORALOGIX_LOG_URL } from "../constructs/coralogix-otel-collector-daemon
 import { EcsCluster } from "../constructs/ecs-cluster";
 import { EcsService } from "../constructs/ecs-service";
 import { EventDrivenEcsTask } from "../constructs/event-driven-ecs-task";
+import { MongoDBCluster } from "../constructs/mongodb-cluster";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getClarkRuntimeConfig } from "../shared/clark-config";
 import { getServiceConnectUri } from "../shared/ecs";
@@ -19,6 +20,7 @@ export interface ClarkStackProps extends StackProps {
     readonly environment: Environment;
     readonly cluster: EcsCluster;
     readonly sharedAlb: SharedAlb;
+    readonly mongoCluster: MongoDBCluster;
 
     // TODO: Find a cleaner way to pass all these secrets without having to add them to the props interface
     readonly dockerHubSecret: ISecret;
@@ -26,7 +28,6 @@ export interface ClarkStackProps extends StackProps {
     readonly sendGridSecret: ISecret;
     readonly shortcutSecret: ISecret;
     readonly slackSecret: ISecret;
-    readonly mongoConnectionSecret: ISecret;
 
     // TODO: The services need to remove coralogix specific implementations and move to
     // OTEL since the coralogix implementation is deprecated
@@ -54,7 +55,7 @@ export class ClarkStack extends Stack {
         const sendGridSecret = props.sendGridSecret;
         const shortcutSecret = props.shortcutSecret;
         const slackSecret = props.slackSecret;
-        const mongoDbUriSecret = EcsSecret.fromSecretsManager(props.mongoConnectionSecret, "MONGODB_URI");
+        const mongoDbUriSecret = EcsSecret.fromSecretsManager(props.mongoCluster.connectionSecret, "MONGODB_URI");
         const sharedClarkSecret = EcsSecret.fromSecretsManager(clarkSecret, "SECRET_KEY");
 
         const defaultServiceProps = {
@@ -73,6 +74,7 @@ export class ClarkStack extends Stack {
         const standardGuidelinesService = new EcsService(this, "StandardGuidelinesService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/standard-guidelines-service:${tag}`,
+            mongoCluster: props.mongoCluster,
             containerOptions: {
                 environment: {
                     PORT: "3000",
@@ -96,6 +98,7 @@ export class ClarkStack extends Stack {
         const clarkService = new EcsService(this, "ClarkService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/clark-service:${tag}`,
+            mongoCluster: props.mongoCluster,
             containerOptions: {
                 environment: {
                     PORT: "3000",
@@ -137,6 +140,7 @@ export class ClarkStack extends Stack {
         const hierarchyService = new EcsService(this, "HierarchyService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/hierarchy-service:${tag}`,
+            mongoCluster: props.mongoCluster,
             containerOptions: {
                 environment: {
                     PORT: "3000",
@@ -187,6 +191,7 @@ export class ClarkStack extends Stack {
             imageRepository: `cyber4all/clark-bundling-service:${tag}`,
             dockerCredentials: props.dockerHubSecret,
             cluster: props.cluster.cluster,
+            mongoCluster: props.mongoCluster,
             eventPattern,
             containerOptions: {
                 environment: {

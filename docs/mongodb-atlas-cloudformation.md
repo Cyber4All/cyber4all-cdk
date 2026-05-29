@@ -141,6 +141,21 @@ Do not use:
 https://github.com/cyber4all/cyber4all-cdk
 ```
 
+## Atlas Project ID Context
+
+Some MongoDB Atlas CloudFormation resources, including `MongoDB::Atlas::DatabaseUser`, require the Atlas project ID as a plain string and do not accept cross-stack `Fn::ImportValue` references.
+
+After the Mongo Atlas stack has created the project, copy the `MongoDBProjectId` stack output into `cdk.context.json`:
+
+```json
+{
+  "mongodbAtlasProjectId:stg": "<staging-atlas-project-id>",
+  "mongodbAtlasProjectId:prd": "<prod-atlas-project-id>"
+}
+```
+
+Leave an environment blank until its Atlas project exists. Blank or `REPLACE_...` values are ignored by the CDK app.
+
 ## Pre-Deploy Checklist
 
 - The Atlas API key exists and has the needed Atlas permissions.
@@ -152,6 +167,7 @@ https://github.com/cyber4all/cyber4all-cdk
 - Each activated extension uses an execution role that can read the Atlas profile secret.
 - The extension execution role trusts `resources.cloudformation.amazonaws.com`.
 - Atlas tag values do not contain `/`.
+- `cdk.context.json` contains the deployed Atlas project ID for any environment deploying database users.
 
 ## Troubleshooting
 

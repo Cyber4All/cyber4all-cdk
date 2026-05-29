@@ -1,11 +1,12 @@
-import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
+import { CfnOutput, RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import { IVpc } from "aws-cdk-lib/aws-ec2";
 import { Construct } from "constructs";
 import { MongoDBCluster } from "../constructs/mongodb-cluster";
 import { MongoDBNetwork } from "../constructs/mongodb-network";
 import { MongoDBProject } from "../constructs/mongodb-project";
+import { getMongoDBAtlasProjectIdFromContext } from "../shared/mongodb-context";
 import { getRegionShortName } from "../shared/names";
-import { ENVIRONMENT_TAG } from "../shared/tags";
+import { APPLICATION_TAG, ENVIRONMENT_TAG } from "../shared/tags";
 import { Environment, getEnvironmentName } from "../shared/types";
 
 export interface MongoAtlasStackProps extends StackProps {
@@ -25,7 +26,8 @@ export interface MongoAtlasStackProps extends StackProps {
 // https://constructs.dev/packages/awscdk-resources-mongodbatlas/v/4.0.0?lang=typescript
 export class MongoAtlasStack extends Stack {
     public readonly project: MongoDBProject;
-    public readonly cluster: MongoDBCluster;
+    public readonly clarkCluster: MongoDBCluster;
+    public readonly competencyCluster: MongoDBCluster;
 
     private readonly baseName: string;
     private readonly regionShortName: string;
@@ -33,7 +35,7 @@ export class MongoAtlasStack extends Stack {
     constructor(scope: Construct, id: string, props: MongoAtlasStackProps) {
         super(scope, id, props);
 
-        this.baseName = `${props?.environment}-cyber4all`;
+        this.baseName = `${props.environment}-cyber4all`;
         this.regionShortName = getRegionShortName(this.region);
 
 
@@ -44,19 +46,35 @@ export class MongoAtlasStack extends Stack {
             }
         });
 
+        const contextProjectId = getMongoDBAtlasProjectIdFromContext(this, props.environment);
+        const clusterProjectId = contextProjectId ?? this.project.projectId;
+
+        new CfnOutput(this, "MongoDBProjectId", {
+            value: this.project.projectId,
+            description: "MongoDB Atlas project id to copy into CDK context for cross-stack Atlas resources.",
+        });
+
         // Creates a flex cluster for non-prod environments and a dedicated
         // cluster for prod to optimize cost while meeting performance needs.
-        //
-        // TODO: In the future if the storage or compute needs increasing we
-        // can update the optional props `diskSizeGb` and `instanceSize` to 
-        // set a larger base cluster size.
-        this.cluster = new MongoDBCluster(this, "MongoDBCluster", {
-            projectId: this.project.projectId,
-            clusterName: `${this.baseName}-cluster-${this.regionShortName}`,
+        this.clarkCluster = new MongoDBCluster(this, "ClarkMongoDBCluster", {
+            projectId: clusterProjectId,
+            clusterName: `${this.baseName}-clark-cluster-${this.regionShortName}`,
             flex: props.environment !== Environment.PROD,
             instanceSize: props.environment === Environment.PROD ? "M10" : undefined,
             tags: [
                 { key: ENVIRONMENT_TAG, value: getEnvironmentName(props.environment) },
+                { key: APPLICATION_TAG, value: "clark" },
+            ],
+            removalPolicy: props.environment === Environment.PROD ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
+        });
+        this.competencyCluster = new MongoDBCluster(this, "CompetencyMongoDBCluster", {
+            projectId: clusterProjectId,
+            clusterName: `${this.baseName}-competency-cluster-${this.regionShortName}`,
+            flex: props.environment !== Environment.PROD,
+            instanceSize: props.environment === Environment.PROD ? "M10" : undefined,
+            tags: [
+                { key: ENVIRONMENT_TAG, value: getEnvironmentName(props.environment) },
+                { key: APPLICATION_TAG, value: "competency" },
             ],
             removalPolicy: props.environment === Environment.PROD ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
         });
