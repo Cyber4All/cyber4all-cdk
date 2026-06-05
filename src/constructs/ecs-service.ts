@@ -89,7 +89,7 @@ export interface EcsServiceProps {
     /** Optional ALB routing for public services. Omit for VPC-only services. */
     readonly albRouting?: AlbRoutingOptions;
 
-    /** OptionalThe MongoDB cluster to which the service has access. */
+    /** Optional MongoDB cluster to which the service has access. */
     readonly mongoCluster?: MongoDBCluster;
 
     /** Optional whether to enable execute command. */
