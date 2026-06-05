@@ -6,7 +6,6 @@ import { Construct } from "constructs";
 import {
     AWS_REGION,
 } from "../constants";
-import { CORALOGIX_LOG_URL } from "../constructs/coralogix-otel-collector-daemon";
 import { EcsCluster } from "../constructs/ecs-cluster";
 import { EcsService } from "../constructs/ecs-service";
 import { EventDrivenEcsTask } from "../constructs/event-driven-ecs-task";
@@ -197,8 +196,8 @@ export class ClarkStack extends Stack {
                 environment: {
                     EPHEMERAL_STORAGE_THRESHOLD: "80",
                     BUCKET: clarkConfig.clarkFileUploadsBucketName,
-                    CORALOGIX_LOG_URL,
                     GO_ENV: nodeEnv,
+                    CORALOGIX_LOG_URL: clarkConfig.coralogixLogUrl,
                 },
                 secrets: {
                     DB_URI: mongoDbUriSecret,

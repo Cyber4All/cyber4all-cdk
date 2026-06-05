@@ -3,6 +3,8 @@
 *.d.ts
 node_modules
 dist
+.venv
+mongo-backups
 
 # CDK asset staging directory
 .cdk.staging

@@ -1,5 +1,6 @@
 import { Duration, RemovalPolicy, Stack } from "aws-cdk-lib";
 import {
+    AppProtocol,
     Compatibility,
     ContainerImage,
     Ec2Service,
@@ -10,7 +11,12 @@ import {
     Protocol,
     TaskDefinition,
 } from "aws-cdk-lib/aws-ecs";
-import { ManagedPolicy, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
+import {
+    ManagedPolicy,
+    PolicyStatement,
+    Role,
+    ServicePrincipal,
+} from "aws-cdk-lib/aws-iam";
 import { ILogGroup, LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import {
     BlockPublicAccess,
@@ -27,24 +33,26 @@ import { getRegionShortName } from "../shared/names";
 import { Environment } from "../shared/types";
 import { EcsCluster } from "./ecs-cluster";
 
+export const CORALOGIX_LOG_URL = "https://api.coralogix.us/api/v1/logs";
+
 const DEFAULT_VERSION = "v0.5.12";
 const DEFAULT_CONFIG_KEY = "coralogix/coralogix-otel-config.yaml";
 
-export const CORALOGIX_LOG_URL = "https://api.coralogix.us/api/v1/logs";
-
-export interface CoralogixOtelCollectorDaemonProps {
+export interface CoralogixOtelCollectorServiceProps {
     readonly cluster: EcsCluster;
     readonly environment: Environment;
+    readonly desiredCount?: number;
 }
 
-export class CoralogixOtelCollectorDaemon extends Construct {
+export class CoralogixOtelCollectorService extends Construct {
     public readonly taskDefinition: TaskDefinition;
-    public readonly daemon: Ec2Service;
+    public readonly service: Ec2Service;
     public readonly logGroup: ILogGroup;
     public readonly privateKeySecret: ISecret;
     public readonly configBucket: IBucket;
+    public readonly serviceName: string;
 
-    constructor(scope: Construct, id: string, props: CoralogixOtelCollectorDaemonProps) {
+    constructor(scope: Construct, id: string, props: CoralogixOtelCollectorServiceProps) {
         super(scope, id);
 
         const stack = Stack.of(this);
@@ -55,11 +63,10 @@ export class CoralogixOtelCollectorDaemon extends Construct {
         const uniqueSuffix = this.node.addr.substring(0, 8);
         const resourceName = `${resourceBaseName}-${regionShortName}-${uniqueSuffix}`;
 
+        this.serviceName = logicalServiceName;
+
         const configPath = path.join(__dirname, "../../assets/coralogix-otel-config.yaml");
         const configKey = DEFAULT_CONFIG_KEY;
-
-        const profilingConfigPath = path.join(__dirname, "../../assets/otel-profiling-config.yaml");
-        const profilingConfigKey = "coralogix/otel-profiling-config.yaml";
 
         this.privateKeySecret = new Secret(this, "CoralogixPrivateKeySecret", {
             secretName: `/${props.environment}/cyber4all/coralogix`,
@@ -78,10 +85,7 @@ export class CoralogixOtelCollectorDaemon extends Construct {
 
         const configDeployment = new BucketDeployment(this, "ConfigDeployment", {
             destinationBucket: this.configBucket,
-            sources: [
-                Source.data(configKey, fs.readFileSync(configPath, "utf8")),
-                Source.data(profilingConfigKey, fs.readFileSync(profilingConfigPath, "utf8")),
-            ],
+            sources: [Source.data(configKey, fs.readFileSync(configPath, "utf8"))],
             retainOnDelete: false,
         });
 
@@ -95,11 +99,18 @@ export class CoralogixOtelCollectorDaemon extends Construct {
             ],
         });
 
+        taskAndExecutionRole.addToPolicy(
+            new PolicyStatement({
+                actions: ["ec2:DescribeTags"],
+                resources: ["*"],
+            }),
+        );
+
         this.privateKeySecret.grantRead(taskAndExecutionRole);
         this.configBucket.grantRead(taskAndExecutionRole);
 
         this.logGroup = new LogGroup(this, "LogGroup", {
-            logGroupName: `/ecs/daemon/${resourceName}`,
+            logGroupName: `/ecs/service/${resourceName}`,
             retention: RetentionDays.ONE_WEEK,
             removalPolicy: RemovalPolicy.DESTROY,
         });
@@ -108,46 +119,30 @@ export class CoralogixOtelCollectorDaemon extends Construct {
 
         this.taskDefinition = new TaskDefinition(this, "TaskDefinition", {
             family: resourceName,
-            cpu: "256",
-            memoryMiB: "2048",
+            cpu: "512",
+            memoryMiB: "1024",
             executionRole: taskAndExecutionRole,
             taskRole: taskAndExecutionRole,
             compatibility: Compatibility.EC2,
-            networkMode: NetworkMode.HOST,
-            volumes: [
-                {
-                    name: "hostfs",
-                    host: {
-                        sourcePath: "/var/lib/docker",
-                    },
-                },
-                {
-                    name: "docker-socket",
-                    host: {
-                        sourcePath: "/var/run/docker.sock",
-                    },
-                },
-            ],
+            networkMode: NetworkMode.BRIDGE,
         });
 
         const container = this.taskDefinition.addContainer("OtelCollector", {
             containerName: "coralogix-otel-agent",
             image: ContainerImage.fromRegistry(
-                `coralogixrepo/coralogix-otel-collector:${DEFAULT_VERSION}`,
+                `otel/opentelemetry-collector-contrib:0.102.1`,
             ),
             essential: true,
             cpu: 0,
-            memoryLimitMiB: 2048,
-            privileged: true,
+            memoryLimitMiB: 1024,
             entryPoint: ["sh", "-c"],
             command: [`exec /cdot --config ${s3ConfigUrl}`],
             environment: {
                 CORALOGIX_DOMAIN: "coralogix.us",
-                MY_POD_IP: "127.0.0.1",
                 CLUSTER_NAME: props.cluster.cluster.clusterName,
             },
             secrets: {
-                CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(this.privateKeySecret,),
+                CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(this.privateKeySecret),
             },
             logging: LogDriver.awsLogs({
                 streamPrefix: logicalServiceName,
@@ -165,53 +160,52 @@ export class CoralogixOtelCollectorDaemon extends Construct {
         container.addPortMappings(
             {
                 containerPort: 4317,
-                hostPort: 4317,
+                name: "otlp-grpc",
                 protocol: Protocol.TCP,
+                appProtocol: AppProtocol.grpc,
             },
             {
                 containerPort: 4318,
-                hostPort: 4318,
+                name: "otlp-http",
                 protocol: Protocol.TCP,
+                appProtocol: AppProtocol.http,
             },
             {
                 containerPort: 8888,
-                hostPort: 8888,
+                name: "metrics",
                 protocol: Protocol.TCP,
-            },
-            {
-                containerPort: 1777,
-                hostPort: 1777,
-                protocol: Protocol.TCP,
+                appProtocol: AppProtocol.http,
             },
         );
 
-        container.addMountPoints(
-            {
-                sourceVolume: "hostfs",
-                containerPath: "/hostfs/var/lib/docker",
-                readOnly: true,
-            },
-            {
-                sourceVolume: "docker-socket",
-                containerPath: "/var/run/docker.sock",
-                readOnly: false,
-            },
-        );
-
-        this.daemon = new Ec2Service(this, "DaemonService", {
+        this.service = new Ec2Service(this, "Service", {
             serviceName: resourceName,
             cluster: props.cluster.cluster,
             taskDefinition: this.taskDefinition,
-            daemon: true,
-            minHealthyPercent: 0,
-            maxHealthyPercent: 100,
+            desiredCount: props.desiredCount ?? 1,
+            minHealthyPercent: 50,
+            maxHealthyPercent: 200,
             circuitBreaker: {
                 rollback: true,
             },
             enableECSManagedTags: true,
             propagateTags: PropagatedTagSource.TASK_DEFINITION,
+            serviceConnectConfiguration: {
+                services: [
+                    {
+                        portMappingName: "otlp-http",
+                        dnsName: logicalServiceName,
+                        port: 4318,
+                    },
+                    {
+                        portMappingName: "otlp-grpc",
+                        dnsName: `${logicalServiceName}-grpc`,
+                        port: 4317,
+                    },
+                ],
+            },
         });
 
-        this.daemon.node.addDependency(configDeployment);
+        this.service.node.addDependency(configDeployment);
     }
 }

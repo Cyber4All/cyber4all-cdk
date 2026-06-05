@@ -148,12 +148,21 @@ export class EcsService extends Construct {
             }),
         });
 
+        // Add the environment variable for the OTEL exporter endpoint
+        const containerEnvironment = {
+            ...props.containerOptions?.environment,
+            OTEL_TRACES_EXPORTER: "otlp",
+            OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
+            OTEL_EXPORTER_OTLP_COMPRESSION: "gzip",
+            OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "ingress.us1.coralogix.com:443/v1/traces",
+        };
+
         const container = this.taskDefinition.addContainer("Container", {
             containerName: this.serviceName,
             image: ContainerImage.fromRegistry(props.imageRepository, {
                 credentials: props.dockerCredentials,
             }),
-            environment: props.containerOptions?.environment,
+            environment: containerEnvironment,
             secrets: props.containerOptions?.secrets,
             cpu: props.containerOptions?.cpu ?? 256,
             memoryReservationMiB: props.containerOptions?.memoryReservationMiB ?? 256,

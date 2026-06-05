@@ -2,7 +2,7 @@ import { RemovalPolicy, SecretValue, Stack, StackProps } from "aws-cdk-lib";
 import { IVpc } from "aws-cdk-lib/aws-ec2";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
-import { CoralogixOtelCollectorDaemon } from "../constructs/coralogix-otel-collector-daemon";
+import { CoralogixOtelCollectorService } from "../constructs/coralogix-otel-collector-daemon";
 import { EcsCluster } from "../constructs/ecs-cluster";
 import { SharedAlb } from "../constructs/shared-alb";
 import { Environment } from "../shared/types";
@@ -88,7 +88,7 @@ export class SharedPlatformStack extends Stack {
             removalPolicy: RemovalPolicy.DESTROY
         });
 
-        const otelCollector = new CoralogixOtelCollectorDaemon(this, "CoralogixOtelCollector", {
+        const otelCollector = new CoralogixOtelCollectorService(this, "CoralogixOtelCollector", {
             cluster: this.cluster,
             environment: props.environment,
         });

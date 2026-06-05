@@ -14,9 +14,6 @@ import { NAME_TAG } from "../shared/tags";
 import { Environment } from "../shared/types";
 
 const EPHEMERAL_PORT_RANGE = Port.tcpRange(32768, 65535);
-const DEFAULT_MIN_VCPU = 2;
-const DEFAULT_MIN_MEMORY_MIB = 4096;
-
 export interface EcsClusterProps {
     readonly environment: Environment;
     readonly vpc: IVpc;
@@ -97,10 +94,16 @@ export class EcsCluster extends Construct {
             maxCapacity: 5,
         });
 
+        autoScalingGroup.addUserData(
+            "cat <<'EOF' >> /etc/ecs/ecs.config",
+            `ECS_CLUSTER=${this.cluster.clusterName}`,
+            "ECS_ENABLE_CONTAINER_METADATA=true",
+            "EOF"
+        );
+
         this.capacityProvider = new AsgCapacityProvider(this, "AsgCapacityProvider", {
             capacityProviderName: `${this.baseName}-asg-provider-${this.regionShortName}-${this.uniqueSuffix}`,
             autoScalingGroup,
-
         });
         this.cluster.addAsgCapacityProvider(this.capacityProvider);
     }
