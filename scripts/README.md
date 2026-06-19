@@ -1,77 +1,52 @@
-# MongoDB Sync Scripts
+# MongoDB Sync Script
 
-The supported entry point is the Python CLI:
-
-```bash
-uv run scripts/mongo_sync.py --help
-```
-
-Common migrations:
+The supported entry point is the interactive Python script:
 
 ```bash
-# Legacy prod SSM connection strings to new staging Secrets Manager clusters.
-uv run scripts/mongo_sync.py sync \
-  --source prod \
-  --target staging \
-  --source-store legacy-ssm \
-  --target-store secrets-manager \
-  --apps clark competency
-
-# Prod to local MongoDB. Password mocking is enabled automatically for prod -> local.
-uv run scripts/mongo_sync.py sync \
-  --source prod \
-  --target local \
-  --source-store legacy-ssm \
-  --apps clark competency
-
-# Backup only.
-uv run scripts/mongo_sync.py backup \
-  --source prod \
-  --source-store legacy-ssm \
-  --apps clark competency
-
-# Restore from a backup directory to staging.
-uv run scripts/mongo_sync.py restore \
-  --from mongo-backups/20260605-120000 \
-  --target staging \
-  --target-store secrets-manager \
-  --apps clark competency \
-  --mock-passwords
+uv run scripts/mongo_sync.py
 ```
 
-`--source-store auto` and `--target-store auto` try the CDK-created Secrets
-Manager secret first, then fall back to the legacy SSM path:
+The script is intentionally narrow. It backs up prod, restores that fresh
+backup to staging or local, and always mocks app user passwords after
+`mongorestore`.
+
+The only prompts are:
+
+- Whether prod uses legacy SSM connection strings or current Secrets Manager
+  connection strings.
+- Whether to restore the prod backup to staging or local.
+
+Connection strings are fixed by workflow:
 
 ```text
-/cyber4all/mongodb/{env}-cyber4all-{app}-cluster-{region_short}/connection
-/{legacy_env}/{app}/mongo/connection-string
+legacy prod source:  /prod/{app}/mongo/connection-string in cyber4all-dev account 842676000360
+current prod source: /cyber4all/mongodb/prd-cyber4all-{app}-cluster-use1/connection
+staging target:      /cyber4all/mongodb/stg-cyber4all-{app}-cluster-use1/connection
+local target:        mongodb://localhost:27017
 ```
 
-These scripts only support `us-east-1`; the CDK Secrets Manager path uses
-`use1` as the region suffix. CDK-created secrets are expected to be JSON and
-the script reads the `MONGODB_URI` field.
+Secrets Manager connection secrets are expected to be JSON and the script reads
+the `MONGODB_URI` field.
 
 ## AWS Profiles And Access
 
-Use `-p` or `--profile` to choose the AWS CLI profile for both source and
-target access:
+Prod legacy SSM parameters live in the cyber4all-dev account
+`842676000360`. The script reads `~/.aws/config` and chooses a profile for that
+account automatically when legacy mode is selected.
 
-```bash
-uv run scripts/mongo_sync.py sync \
-  --source prod \
-  --target staging \
-  --profile cyber4all-admin
-```
+The script also reads `~/.aws/config` to find the prod and staging SSO profiles
+matching the Atlas IAM database users below. For staging restores, the staging
+profile is used both to read the new Secrets Manager connection string and to
+authenticate to MongoDB when the URI uses `MONGODB-AWS`.
 
-Use `--source-profile` and `--target-profile` when the source and target are
-in different AWS accounts or need different roles:
+The script verifies the selected MongoDB auth profiles with STS before running:
 
-```bash
-uv run scripts/mongo_sync.py sync \
-  --source prod \
-  --target staging \
-  --source-profile cyber4all-prod \
-  --target-profile cyber4all-staging
+```text
+prod MongoDB auth:
+arn:aws:iam::194683060534:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_AWSDeveloperAccess_a4ce2d7d5ed4adfc
+
+staging MongoDB auth:
+arn:aws:iam::317620868823:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_AWSDeveloperAccess_6653ddc859367089
 ```
 
 The script does not keep its own allowlist of profile names. A profile is
@@ -89,6 +64,6 @@ allowed only by the permissions behind that AWS profile:
 To stop a profile from being usable, remove either its AWS read/decrypt access
 to the connection string or its matching MongoDB Atlas IAM database user/roles.
 
-Restores use `mongorestore --drop`, so the CLI asks for confirmation unless
-`--yes` is passed. Restoring into `prod` is blocked unless
-`--allow-prod-target` is also passed.
+Restores use `mongorestore --drop`, so the script asks you to type `restore`
+before a non-dry-run restore starts. There is no prod restore path in this
+script.
