@@ -1,5 +1,5 @@
-import { Stack, Tags, ValidationError } from "aws-cdk-lib";
-import { Certificate, CertificateValidation, ICertificate } from "aws-cdk-lib/aws-certificatemanager";
+import { ArnFormat, Stack, Tags, ValidationError } from "aws-cdk-lib";
+import { Certificate, ICertificate } from "aws-cdk-lib/aws-certificatemanager";
 import { IVpc, SecurityGroup } from "aws-cdk-lib/aws-ec2";
 import {
     ApplicationListener,
@@ -11,6 +11,7 @@ import {
 import { HostedZone, IHostedZone } from "aws-cdk-lib/aws-route53";
 import { lit } from "aws-cdk-lib/core/lib/helpers-internal";
 import { Construct } from "constructs";
+import { getAcmCertificateIdForDomain } from "../shared/acm-certificates";
 import { getRegionShortName } from "../shared/names";
 import { NAME_TAG } from "../shared/tags";
 import { Environment } from "../shared/types";
@@ -55,7 +56,7 @@ export class SharedAlb extends Construct {
             securityGroup: loadBalancerSecurityGroup,
         });
 
-        const certificates = this.createCertificates(props.albDomainNames);
+        const certificates = this.importCertificates(props.albDomainNames);
         if (certificates.length === 0) {
             throw new ValidationError(lit`SharedAlb`, "At least one domain name is required for the shared ALB.", this);
         }
@@ -94,7 +95,7 @@ export class SharedAlb extends Construct {
         });
     }
 
-    private createCertificates(domainNames: string[]): ICertificate[] {
+    private importCertificates(domainNames: string[]): ICertificate[] {
         const uniqueDomains = Array.from(new Set(domainNames.filter(Boolean)));
 
         return uniqueDomains.map((domainName, index) => {
@@ -104,11 +105,17 @@ export class SharedAlb extends Construct {
 
             this.hostedZones[domainName] = hostedZone;
 
-            return new Certificate(this, `AlbCertificate${index}`, {
-                domainName,
-                subjectAlternativeNames: [`*.${domainName}`],
-                validation: CertificateValidation.fromDns(hostedZone),
-            });
+            const certificateId = getAcmCertificateIdForDomain(domainName);
+            if (!certificateId) {
+                throw new ValidationError(lit`AcmCertificate`, `No ACM certificate ID is configured for domain name ${domainName}.`, this);
+            }
+
+            return Certificate.fromCertificateArn(this, `AlbCertificate${index}`, Stack.of(this).formatArn({
+                service: "acm",
+                resource: "certificate",
+                resourceName: certificateId,
+                arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
+            }));
         });
     }
 }

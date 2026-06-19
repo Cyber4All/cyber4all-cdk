@@ -1,20 +1,26 @@
-import { Stack } from "aws-cdk-lib";
+import { RemovalPolicy, Stack, Tags } from "aws-cdk-lib";
+import { SecurityGroup, SubnetType } from "aws-cdk-lib/aws-ec2";
 import {
     AwsLogDriver,
     ContainerImage,
-    Ec2TaskDefinition,
-    ICluster
+    FargatePlatformVersion,
+    FargateTaskDefinition,
+    ICluster,
+    LaunchType
 } from "aws-cdk-lib/aws-ecs";
 import { EventPattern, Rule } from "aws-cdk-lib/aws-events";
 import { EcsTask } from "aws-cdk-lib/aws-events-targets";
 import { Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
+import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import { ISecret } from "aws-cdk-lib/aws-secretsmanager";
 import { CfnDatabaseUser, CfnDatabaseUserPropsAwsiamType } from "awscdk-resources-mongodbatlas";
 import { Construct } from "constructs";
 import { getImageName, getRegionShortName } from "../shared/names";
+import { NAME_TAG } from "../shared/tags";
 import { Environment } from "../shared/types";
-import { ContainerOptions } from "./ecs-service";
+import { ContainerOptions, OtelSidecarOptions } from "./ecs-service";
 import { MongoDBCluster } from "./mongodb-cluster";
+import { addOtelSidecar, getOtelEnvironment } from "./otel-sidecar";
 /**
  * Properties for an ECS task launched by an EventBridge rule.
  */
@@ -39,10 +45,19 @@ export interface EventDrivenEcsTaskProps {
 
     /** Optional MongoDB cluster for the task. */
     readonly mongoCluster?: MongoDBCluster;
+
+    /** Options for configuring the OTEL sidecar. */
+    readonly otelSidecarOptions?: OtelSidecarOptions;
+
+    /** Fargate task CPU units. Defaults to 512. */
+    readonly taskCpu?: number;
+
+    /** Fargate task memory in MiB. Defaults to 1024. */
+    readonly taskMemoryLimitMiB?: number;
 }
 
 export class EventDrivenEcsTask extends Construct {
-    public readonly taskDefinition: Ec2TaskDefinition;
+    public readonly taskDefinition: FargateTaskDefinition;
     public readonly eventRule: Rule;
 
     private readonly baseName: string;
@@ -66,27 +81,59 @@ export class EventDrivenEcsTask extends Construct {
             assumedBy: new ServicePrincipal("ecs-tasks.amazonaws.com"),
         });
 
-        this.taskDefinition = new Ec2TaskDefinition(this, "TaskDefinition", {
+        this.taskDefinition = new FargateTaskDefinition(this, "TaskDefinition", {
             family: resourceName,
+            cpu: props.taskCpu ?? 512,
+            memoryLimitMiB: props.taskMemoryLimitMiB ?? 1024,
             taskRole,
         });
 
         const logDriver = new AwsLogDriver({
             streamPrefix: taskName,
+            logGroup: new LogGroup(this, "LogGroup", {
+                logGroupName: `/ecs/scheduled-task/${resourceName}`,
+                retention: RetentionDays.ONE_WEEK,
+                removalPolicy: RemovalPolicy.DESTROY,
+            }),
         });
+
+        let otelEnvironment = {};
+        if (props.otelSidecarOptions) {
+            const { applicationName, coralogixSecret, otelConfigBucket, otelConfigS3Url } = props.otelSidecarOptions;
+            otelEnvironment = getOtelEnvironment({
+                subsystemName: taskName,
+                applicationName: `${applicationName}-${props.environment}`,
+                enableNodeAutoInstrumentation: false,
+            });
+
+            addOtelSidecar(this.taskDefinition, { coralogixSecret, otelConfigBucket, otelConfigS3Url });
+        }
 
         this.taskDefinition.addContainer("Container", {
             containerName: taskName,
             image: ContainerImage.fromRegistry(props.imageRepository, {
                 credentials: props.dockerCredentials,
             }),
-            environment: props.containerOptions?.environment,
+            essential: true,
+            environment: {
+                ...otelEnvironment,
+                ...props.containerOptions?.environment,
+            },
             secrets: props.containerOptions?.secrets,
-            cpu: props.containerOptions?.cpu ?? 256,
-            memoryReservationMiB: props.containerOptions?.memoryReservationMiB ?? 256,
-            memoryLimitMiB: props.containerOptions?.memoryReservationMiB ? props.containerOptions?.memoryReservationMiB + 1024 : 1024,
+            cpu: props.containerOptions?.cpu ?? 0,
+            memoryReservationMiB: props.containerOptions?.memoryReservationMiB,
+            memoryLimitMiB: props.containerOptions?.memoryLimitMiB,
             logging: logDriver,
         });
+
+        const securityGroupName = `${this.baseName}-${taskName}-sg-${this.regionShortName}-${this.uniqueSuffix}`;
+        const securityGroup = new SecurityGroup(this, "SecurityGroup", {
+            vpc: props.cluster.vpc,
+            securityGroupName: securityGroupName,
+            description: `Security group for ${taskName} Fargate scheduled task`,
+            allowAllOutbound: true,
+        });
+        Tags.of(securityGroup).add(NAME_TAG, securityGroupName);
 
         this.eventRule = new Rule(this, "EventRule", {
             eventPattern: props.eventPattern,
@@ -97,6 +144,11 @@ export class EventDrivenEcsTask extends Construct {
                 cluster: props.cluster,
                 taskDefinition: this.taskDefinition,
                 taskCount: 1,
+                launchType: LaunchType.FARGATE,
+                platformVersion: FargatePlatformVersion.LATEST,
+                assignPublicIp: false,
+                securityGroups: [securityGroup],
+                subnetSelection: { subnetType: SubnetType.PRIVATE_WITH_EGRESS },
             }),
         );
 

@@ -1,10 +1,18 @@
 import { RemovalPolicy, SecretValue, Stack, StackProps } from "aws-cdk-lib";
 import { IVpc } from "aws-cdk-lib/aws-ec2";
+import { Bucket, IBucket } from "aws-cdk-lib/aws-s3";
+import { BucketDeployment, Source } from "aws-cdk-lib/aws-s3-deployment";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
-import { CoralogixOtelCollectorService } from "../constructs/coralogix-otel-collector-daemon";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { EcsCluster } from "../constructs/ecs-cluster";
 import { SharedAlb } from "../constructs/shared-alb";
+import {
+    CORALOGIX_FARGATE_OTEL_CONFIG_ASSET_PATH,
+    CORALOGIX_FARGATE_OTEL_CONFIG_OBJECT_KEY,
+} from "../shared/coralogix";
+import { getRegionShortName } from "../shared/names";
 import { Environment } from "../shared/types";
 
 export interface SharedPlatformStackProps extends StackProps {
@@ -22,9 +30,16 @@ export class SharedPlatformStack extends Stack {
     public readonly sendGridSecret: ISecret;
     public readonly shortcutSecret: ISecret;
     public readonly slackSecret: ISecret;
+    public readonly otelConfigBucket: IBucket;
+    public readonly otelConfigObjectKey: string;
+    public readonly otelConfigS3Url: string;
 
     constructor(scope: Construct, id: string, props: SharedPlatformStackProps) {
         super(scope, id, props);
+
+        const resourceBaseName = `${props.environment}-cyber4all`;
+        const regionShortName = getRegionShortName(Stack.of(this).region);
+        const uniqueSuffix = this.node.addr.substring(0, 8);
 
         this.cluster = new EcsCluster(this, "EcsCluster", {
             environment: props.environment,
@@ -37,10 +52,18 @@ export class SharedPlatformStack extends Stack {
             albDomainNames: props.albDomainNames,
         });
 
-        this.cluster.allowIngressFromSharedAlb(this.sharedAlb.loadBalancer);
-
         // Create secrets in Secrets Manager for the following 3rd party services
         const secretBaseName = `/${props.environment}/cyber4all`;
+        // Preserve the old construct path so the existing named secret updates in place.
+        const coralogixScope = new Construct(this, "CoralogixOtelCollector");
+        this.coralogixSecret = new Secret(coralogixScope, "CoralogixPrivateKeySecret", {
+            secretName: `${secretBaseName}/coralogix`,
+            description: "Coralogix API credentials for telemetry export. Must contain a PRIVATE_KEY field.",
+            secretObjectValue: {
+                PRIVATE_KEY: SecretValue.unsafePlainText("placeholder"),
+            },
+            removalPolicy: RemovalPolicy.DESTROY,
+        });
         this.dockerHubSecret = new Secret(this, "DockerHubSecret", {
             secretName: `${secretBaseName}/dockerhub`,
             description: "Docker Hub credentials for pulling private container images. Should contain 'username' and 'password' fields.",
@@ -88,10 +111,24 @@ export class SharedPlatformStack extends Stack {
             removalPolicy: RemovalPolicy.DESTROY
         });
 
-        const otelCollector = new CoralogixOtelCollectorService(this, "CoralogixOtelCollector", {
-            cluster: this.cluster,
-            environment: props.environment,
+        this.otelConfigObjectKey = CORALOGIX_FARGATE_OTEL_CONFIG_OBJECT_KEY;
+        this.otelConfigBucket = new Bucket(this, "FargateOtelConfigBucket", {
+            bucketName: `${resourceBaseName}-otel-config-${regionShortName}-${uniqueSuffix}`,
+            enforceSSL: true,
+            autoDeleteObjects: true,
+            removalPolicy: RemovalPolicy.DESTROY,
         });
-        this.coralogixSecret = otelCollector.privateKeySecret;
+        this.otelConfigS3Url = `s3://${this.otelConfigBucket.bucketName}.s3.${this.region}.amazonaws.com/${this.otelConfigObjectKey}`;
+
+        new BucketDeployment(this, "FargateOtelConfigDeployment", {
+            destinationBucket: this.otelConfigBucket,
+            sources: [
+                Source.data(
+                    this.otelConfigObjectKey,
+                    fs.readFileSync(path.join(__dirname, "../..", CORALOGIX_FARGATE_OTEL_CONFIG_ASSET_PATH), "utf8"),
+                ),
+            ],
+            retainOnDelete: false,
+        });
     }
 }

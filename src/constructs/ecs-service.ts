@@ -1,36 +1,37 @@
-import { RemovalPolicy, Stack, TimeZone, ValidationError } from "aws-cdk-lib";
+import { RemovalPolicy, Stack, Tags, TimeZone, ValidationError } from "aws-cdk-lib";
 import { Schedule } from "aws-cdk-lib/aws-applicationautoscaling";
-import { IVpc, Port } from "aws-cdk-lib/aws-ec2";
+import { IVpc, Peer, Port, SecurityGroup, SubnetType } from "aws-cdk-lib/aws-ec2";
 import {
-    AppProtocol,
     AwsLogDriver,
-    CapacityProviderStrategy,
-    Compatibility,
     ContainerImage,
-    Ec2Service,
     Secret as EcsSecret,
-    ICluster,
-    NetworkMode,
-    TaskDefinition
+    FargatePlatformVersion,
+    FargateService,
+    FargateTaskDefinition,
+    ICluster
 } from "aws-cdk-lib/aws-ecs";
 import {
     ApplicationListenerRule,
     ApplicationProtocol,
     ApplicationTargetGroup,
-    ListenerCondition
+    ListenerCondition,
+    TargetType
 } from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import { ManagedPolicy, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import { ARecord, RecordTarget } from "aws-cdk-lib/aws-route53";
 import { LoadBalancerTarget } from "aws-cdk-lib/aws-route53-targets";
+import { IBucket } from "aws-cdk-lib/aws-s3";
 import { ISecret } from "aws-cdk-lib/aws-secretsmanager";
 import { lit } from "aws-cdk-lib/core/lib/helpers-internal";
 import { CfnDatabaseUser, CfnDatabaseUserPropsAwsiamType } from "awscdk-resources-mongodbatlas";
 import { Construct } from "constructs";
 import { getHttpsListener, nextListenerRulePriority } from "../shared/alb";
 import { getImageName, getRecordName, getRegionShortName } from "../shared/names";
-import { Environment } from "../shared/types";
+import { NAME_TAG } from "../shared/tags";
+import { Application, Environment, getEnvironmentName } from "../shared/types";
 import { MongoDBCluster } from "./mongodb-cluster";
+import { addOtelSidecar, getOtelEnvironment } from "./otel-sidecar";
 import { SharedAlb } from "./shared-alb";
 
 /**
@@ -45,6 +46,9 @@ export interface ContainerOptions {
 
     /** Soft memory reservation for the container. Defaults to 256 MiB. */
     readonly memoryReservationMiB?: number;
+
+    /** Hard memory limit for the container. Defaults to the task memory limit. */
+    readonly memoryLimitMiB?: number;
 
     /** CPU units reserved for the container. Defaults to 256. */
     readonly cpu?: number;
@@ -61,8 +65,23 @@ export interface AlbRoutingOptions {
     readonly hostName: string;
 }
 
+/** Options for configuring the OTEL sidecar. */
+export interface OtelSidecarOptions {
+    /** The name of the application, used in OTEL attributes. */
+    readonly applicationName: Application;
+
+    /** Coralogix secret used by the OTEL sidecar. Must contain a PRIVATE_KEY field. */
+    readonly coralogixSecret: ISecret;
+
+    /** S3 bucket containing the OTEL collector YAML for Fargate sidecars. */
+    readonly otelConfigBucket: IBucket;
+
+    /** S3 URL passed to the OTEL collector sidecar as its config source. */
+    readonly otelConfigS3Url: string;
+}
+
 /**
- * Properties for a long-running ECS service backed by managed instances.
+ * Properties for a long-running ECS service backed by Fargate.
  */
 export interface EcsServiceProps {
     /** Deployment environment used in generated resource names. */
@@ -77,9 +96,6 @@ export interface EcsServiceProps {
     /** ECS cluster where the service is deployed. */
     readonly cluster: ICluster;
 
-    /** ECS capacity provider strategies. */
-    readonly capacityProviderStrategies?: CapacityProviderStrategy[];
-
     /** Desired number of running service tasks. Defaults to 1. */
     readonly desiredCount?: number;
 
@@ -92,13 +108,22 @@ export interface EcsServiceProps {
     /** Optional MongoDB cluster to which the service has access. */
     readonly mongoCluster?: MongoDBCluster;
 
-    /** Optional whether to enable execute command. */
+    /** Optional whether to enable execute command. Default is false. */
     readonly enableExecuteCommand?: boolean;
+
+    /** Options for configuring the OTEL sidecar. */
+    readonly otelSidecarOptions?: OtelSidecarOptions;
+
+    /** Fargate task CPU units. Defaults to 512. */
+    readonly taskCpu?: number;
+
+    /** Fargate task memory in MiB. Defaults to 1024. */
+    readonly taskMemoryLimitMiB?: number;
 }
 
 export class EcsService extends Construct {
-    public readonly taskDefinition: TaskDefinition;
-    public readonly service: Ec2Service;
+    public readonly taskDefinition: FargateTaskDefinition;
+    public readonly service: FargateService;
     public readonly serviceName: string;
 
     private readonly baseName: string;
@@ -112,12 +137,15 @@ export class EcsService extends Construct {
         this.regionShortName = getRegionShortName(Stack.of(this).region);
         this.uniqueSuffix = this.node.addr.substring(0, 8);
 
-        this.serviceName = getImageName(props.imageRepository, this);
-        const resourceName = `${this.baseName}-${this.serviceName}-${this.regionShortName}-${this.uniqueSuffix}`;
+        const imageName = getImageName(props.imageRepository, this);
+        // Public serviceName exposed to other constructs should match the Service Connect DNS
+        // (e.g. stg-clark-service-use1) so other services can resolve it via short name.
+        this.serviceName = `${this.baseName}-${imageName}-${this.regionShortName}`;
+        const resourceName = `${this.baseName}-${imageName}-${this.regionShortName}-${this.uniqueSuffix}`;
         const containerPort = 3000;
 
         const executionRole = new Role(this, "ExecutionRole", {
-            roleName: `${this.baseName}-${this.serviceName}-execution-role-${this.regionShortName}-${this.uniqueSuffix}`,
+            roleName: `${this.baseName}-${imageName}-execution-role-${this.regionShortName}-${this.uniqueSuffix}`,
             assumedBy: new ServicePrincipal("ecs-tasks.amazonaws.com"),
         });
         executionRole.addManagedPolicy(ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonECSTaskExecutionRolePolicy"));
@@ -125,16 +153,16 @@ export class EcsService extends Construct {
             secret.grantRead(executionRole);
         });
 
-        const taskRoleName = `${this.baseName}-${this.serviceName}-task-role-${this.regionShortName}-${this.uniqueSuffix}`;
+        const taskRoleName = `${this.baseName}-${imageName}-task-role-${this.regionShortName}-${this.uniqueSuffix}`;
         const taskRole = new Role(this, "TaskRole", {
             roleName: taskRoleName,
             assumedBy: new ServicePrincipal("ecs-tasks.amazonaws.com"),
         });
 
-        this.taskDefinition = new TaskDefinition(this, "TaskDefinition", {
-            compatibility: Compatibility.EC2,
+        this.taskDefinition = new FargateTaskDefinition(this, "TaskDefinition", {
             family: resourceName,
-            networkMode: NetworkMode.BRIDGE,
+            cpu: props.taskCpu ?? 512,
+            memoryLimitMiB: props.taskMemoryLimitMiB ?? 1024,
             taskRole,
             executionRole,
         });
@@ -148,45 +176,70 @@ export class EcsService extends Construct {
             }),
         });
 
-        // Add the environment variable for the OTEL exporter endpoint
+        let otelEnvironment = {};
+        if (props.otelSidecarOptions) {
+            const { applicationName, coralogixSecret, otelConfigBucket, otelConfigS3Url } = props.otelSidecarOptions;
+
+            otelEnvironment = getOtelEnvironment({
+                applicationName: `${applicationName}-${getEnvironmentName(props.environment)}`,
+                subsystemName: this.serviceName,
+            });
+
+            addOtelSidecar(this.taskDefinition, { coralogixSecret, otelConfigBucket, otelConfigS3Url });
+        }
+
         const containerEnvironment = {
+            ...otelEnvironment,
             ...props.containerOptions?.environment,
-            OTEL_TRACES_EXPORTER: "otlp",
-            OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
-            OTEL_EXPORTER_OTLP_COMPRESSION: "gzip",
-            OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "ingress.us1.coralogix.com:443/v1/traces",
         };
 
         const container = this.taskDefinition.addContainer("Container", {
-            containerName: this.serviceName,
+            containerName: imageName,
             image: ContainerImage.fromRegistry(props.imageRepository, {
                 credentials: props.dockerCredentials,
             }),
+            essential: true,
             environment: containerEnvironment,
             secrets: props.containerOptions?.secrets,
-            cpu: props.containerOptions?.cpu ?? 256,
-            memoryReservationMiB: props.containerOptions?.memoryReservationMiB ?? 256,
-            memoryLimitMiB: props.containerOptions?.memoryReservationMiB ? props.containerOptions?.memoryReservationMiB + 1024 : 1024,
+            cpu: props.containerOptions?.cpu ?? 0,
+            memoryReservationMiB: props.containerOptions?.memoryReservationMiB,
+            memoryLimitMiB: props.containerOptions?.memoryLimitMiB,
             logging: logDriver,
         });
         container.addPortMappings({
             containerPort,
-            name: this.serviceName,
-            appProtocol: AppProtocol.http,
+            name: imageName,
         });
 
-        this.service = new Ec2Service(this, "Service", {
+        const securityGroupName = `${this.baseName}-${this.serviceName}-sg-${this.regionShortName}-${this.uniqueSuffix}`;
+        const securityGroup = new SecurityGroup(this, "SecurityGroup", {
+            vpc: props.cluster.vpc,
+            securityGroupName: securityGroupName,
+            description: `Security group for ${this.serviceName} Fargate service`,
+            allowAllOutbound: true,
+        });
+        Tags.of(securityGroup).add(NAME_TAG, securityGroupName);
+        // Allow ingress from VPC to container port
+        securityGroup.addIngressRule(
+            Peer.ipv4(props.cluster.vpc.vpcCidrBlock),
+            Port.tcp(containerPort),
+            "Allow inbound traffic from VPC",
+        );
+
+        this.service = new FargateService(this, "Service", {
             cluster: props.cluster,
             taskDefinition: this.taskDefinition,
             desiredCount: props.desiredCount ?? 1,
             enableExecuteCommand: props.enableExecuteCommand,
             serviceName: resourceName,
             enableECSManagedTags: true,
-            capacityProviderStrategies: props.capacityProviderStrategies,
+            securityGroups: [securityGroup],
+            vpcSubnets: { subnetType: SubnetType.PRIVATE_WITH_EGRESS },
+            platformVersion: FargatePlatformVersion.LATEST,
             serviceConnectConfiguration: {
                 services: [
                     {
-                        portMappingName: this.serviceName,
+                        portMappingName: imageName,
                         dnsName: this.serviceName,
                         port: containerPort,
                     },
@@ -218,7 +271,7 @@ export class EcsService extends Construct {
         }
 
         if (props.albRouting) {
-            this.configureAlbRouting(props.cluster.vpc, props.albRouting, this.serviceName, containerPort);
+            this.configureAlbRouting(props.cluster.vpc, props.albRouting, imageName, containerPort);
         }
 
         if (props.mongoCluster) {
@@ -241,9 +294,11 @@ export class EcsService extends Construct {
         }
 
         const targetGroup = new ApplicationTargetGroup(this, "TargetGroup", {
+            targetGroupName: `${this.baseName}-${containerName}-${this.uniqueSuffix}`,
             vpc: vpc,
             protocol: ApplicationProtocol.HTTP,
             port: containerPort,
+            targetType: TargetType.IP,
             targets: [
                 this.service.loadBalancerTarget({ containerName, containerPort }),
             ],
@@ -263,11 +318,6 @@ export class EcsService extends Construct {
             target: RecordTarget.fromAlias(new LoadBalancerTarget(loadBalancer.loadBalancer)),
         });
 
-        this.service.connections.allowFrom(
-            loadBalancer.loadBalancer,
-            Port.tcp(containerPort),
-            "Allow ALB traffic to ECS service",
-        );
     }
 
     private configureMongoDbAccess(mongoCluster: MongoDBCluster, taskRoleName: string): void {

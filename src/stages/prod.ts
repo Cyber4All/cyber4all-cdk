@@ -38,6 +38,8 @@ export class ProdStage extends Stage {
             shortcutSecret: sharedPlatformStack.shortcutSecret,
             slackSecret: sharedPlatformStack.slackSecret,
             coralogixSecret: sharedPlatformStack.coralogixSecret,
+            otelConfigBucket: sharedPlatformStack.otelConfigBucket,
+            otelConfigS3Url: sharedPlatformStack.otelConfigS3Url,
             mongoCluster: mongoAtlasStack.clarkCluster,
         });
 
@@ -48,6 +50,8 @@ export class ProdStage extends Stage {
             sharedAlb: sharedPlatformStack.sharedAlb,
             sendGridSecret: sharedPlatformStack.sendGridSecret,
             coralogixSecret: sharedPlatformStack.coralogixSecret,
+            otelConfigBucket: sharedPlatformStack.otelConfigBucket,
+            otelConfigS3Url: sharedPlatformStack.otelConfigS3Url,
             mongoCluster: mongoAtlasStack.competencyCluster,
         });
     }

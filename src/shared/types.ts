@@ -18,3 +18,10 @@ export function getEnvironmentName(environment: Environment): string {
             throw new Error(`Unknown environment: ${environment}`);
     }
 }
+
+export const Application = {
+    CLARK: "clark",
+    COMPETENCY: "competency",
+} as const;
+
+export type Application = typeof Application[keyof typeof Application];

@@ -1,6 +1,7 @@
 import { RemovalPolicy, SecretValue, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret } from "aws-cdk-lib/aws-ecs";
 import { EventPattern } from "aws-cdk-lib/aws-events";
+import { IBucket } from "aws-cdk-lib/aws-s3";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import {
@@ -13,7 +14,7 @@ import { MongoDBCluster } from "../constructs/mongodb-cluster";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getClarkRuntimeConfig } from "../shared/clark-config";
 import { getServiceConnectUri } from "../shared/ecs";
-import { Environment, getEnvironmentName } from "../shared/types";
+import { Application, Environment, getEnvironmentName } from "../shared/types";
 
 export interface ClarkStackProps extends StackProps {
     readonly environment: Environment;
@@ -27,10 +28,9 @@ export interface ClarkStackProps extends StackProps {
     readonly sendGridSecret: ISecret;
     readonly shortcutSecret: ISecret;
     readonly slackSecret: ISecret;
-
-    // TODO: The services need to remove coralogix specific implementations and move to
-    // OTEL since the coralogix implementation is deprecated
     readonly coralogixSecret: ISecret;
+    readonly otelConfigBucket: IBucket;
+    readonly otelConfigS3Url: string;
 }
 
 export class ClarkStack extends Stack {
@@ -61,12 +61,12 @@ export class ClarkStack extends Stack {
             environment: props.environment,
             dockerCredentials: props.dockerHubSecret,
             cluster: props.cluster.cluster,
-            capacityProviderStrategies: [
-                {
-                    capacityProvider: props.cluster.capacityProvider.capacityProviderName,
-                    weight: 1,
-                },
-            ],
+            otelSidecarOptions: {
+                applicationName: Application.CLARK,
+                coralogixSecret: props.coralogixSecret,
+                otelConfigBucket: props.otelConfigBucket,
+                otelConfigS3Url: props.otelConfigS3Url,
+            },
             enableExecuteCommand: props.environment === Environment.STAGING,
         };
 
@@ -89,7 +89,7 @@ export class ClarkStack extends Stack {
                 secrets: {
                     CLARK_DB_URI: mongoDbUriSecret,
                     KEY: sharedClarkSecret,
-                    CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret),
+                    CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret, "PRIVATE_KEY"),
                 },
             },
         });
@@ -172,7 +172,7 @@ export class ClarkStack extends Stack {
                 },
                 secrets: {
                     AWS_JWT_SECRET: sharedClarkSecret,
-                    CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret),
+                    CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret, "PRIVATE_KEY"),
                 },
             },
         });
@@ -197,11 +197,16 @@ export class ClarkStack extends Stack {
                     EPHEMERAL_STORAGE_THRESHOLD: "80",
                     BUCKET: clarkConfig.clarkFileUploadsBucketName,
                     GO_ENV: nodeEnv,
-                    CORALOGIX_LOG_URL: clarkConfig.coralogixLogUrl,
                 },
                 secrets: {
                     DB_URI: mongoDbUriSecret,
                 },
+            },
+            otelSidecarOptions: {
+                applicationName: Application.CLARK,
+                coralogixSecret: props.coralogixSecret,
+                otelConfigBucket: props.otelConfigBucket,
+                otelConfigS3Url: props.otelConfigS3Url,
             },
         });
     }

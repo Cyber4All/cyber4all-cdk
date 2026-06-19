@@ -1,5 +1,6 @@
 import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret } from "aws-cdk-lib/aws-ecs";
+import { IBucket } from "aws-cdk-lib/aws-s3";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import { EcsCluster } from "../constructs/ecs-cluster";
@@ -8,7 +9,7 @@ import { MongoDBCluster } from "../constructs/mongodb-cluster";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getCompetencyRuntimeConfig } from "../shared/competency-config";
 import { getServiceConnectUri } from "../shared/ecs";
-import { Environment, getEnvironmentName } from "../shared/types";
+import { Application, Environment, getEnvironmentName } from "../shared/types";
 
 export interface CompetencyStackProps extends StackProps {
     readonly environment: Environment;
@@ -16,14 +17,12 @@ export interface CompetencyStackProps extends StackProps {
     readonly sharedAlb: SharedAlb;
     readonly mongoCluster: MongoDBCluster;
 
-
     // TODO: Find a cleaner way to pass all these secrets without having to add them to the props interface
     readonly dockerHubSecret: ISecret;
     readonly sendGridSecret: ISecret;
-
-    // TODO: The services need to remove coralogix specific implementations and move to
-    // OTEL since the coralogix implementation is deprecated
     readonly coralogixSecret: ISecret;
+    readonly otelConfigBucket: IBucket;
+    readonly otelConfigS3Url: string;
 }
 
 export class CompetencyStack extends Stack {
@@ -46,12 +45,12 @@ export class CompetencyStack extends Stack {
             environment: props.environment,
             dockerCredentials: props.dockerHubSecret,
             cluster: props.cluster.cluster,
-            capacityProviderStrategies: [
-                {
-                    capacityProvider: props.cluster.capacityProvider.capacityProviderName,
-                    weight: 1,
-                },
-            ],
+            otelSidecarOptions: {
+                applicationName: Application.COMPETENCY,
+                coralogixSecret: props.coralogixSecret,
+                otelConfigBucket: props.otelConfigBucket,
+                otelConfigS3Url: props.otelConfigS3Url,
+            },
         };
 
         const securedAuthService = new EcsService(this, "SecuredAuthService", {

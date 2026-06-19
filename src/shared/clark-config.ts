@@ -1,4 +1,3 @@
-import { CORALOGIX_LOG_URL } from "../constructs/coralogix-otel-collector-daemon";
 import { Environment } from "./types";
 
 type ClarkRuntimeConfig = {
@@ -13,7 +12,6 @@ type ClarkRuntimeConfig = {
     readonly cognitoAdminIdentityPoolId: string;
     readonly clarkDomain: string;
     readonly clarkIssuer: string;
-    readonly coralogixLogUrl: string;
 };
 
 export const PROD_CLARK_DOMAIN = "clark.center";
@@ -34,7 +32,6 @@ export function getClarkRuntimeConfig(environment: Environment): ClarkRuntimeCon
                 cognitoAdminIdentityPoolId: "us-east-1:6691336e-11a1-48db-9774-5f5a2c8dc270",
                 clarkDomain: PROD_CLARK_DOMAIN,
                 clarkIssuer: "C.L.A.R.K. - Cybersecurity Labs and Resource Knowledge-base",
-                coralogixLogUrl: CORALOGIX_LOG_URL,
             };
         case Environment.STAGING:
             return {
@@ -48,7 +45,6 @@ export function getClarkRuntimeConfig(environment: Environment): ClarkRuntimeCon
                 cognitoAdminIdentityPoolId: "us-east-1:a265148e-7418-4a40-aee2-78f5ae7cbf43",
                 clarkDomain: STAGING_CLARK_DOMAIN,
                 clarkIssuer: "C.L.A.R.K. - Cybersecurity Labs and Resource Knowledge-base",
-                coralogixLogUrl: CORALOGIX_LOG_URL,
             };
         default:
             throw new Error(`Unsupported environment: ${environment}`);
