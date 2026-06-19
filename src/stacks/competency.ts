@@ -97,7 +97,7 @@ export class CompetencyStack extends Stack {
             },
         });
 
-        new EcsService(this, "CompetencyGatewayService", {
+        const competencyGatewayService = new EcsService(this, "CompetencyGatewayService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/competency-gateway:${tag}`,
             albRouting: {
@@ -117,5 +117,8 @@ export class CompetencyStack extends Stack {
                 },
             },
         });
+        competencyApiService.service.node.addDependency(securedAuthService.service);
+        competencyGatewayService.service.node.addDependency(securedAuthService.service);
+        competencyGatewayService.service.node.addDependency(competencyApiService.service);
     }
 }

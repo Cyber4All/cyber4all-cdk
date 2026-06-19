@@ -153,7 +153,7 @@ export class ClarkStack extends Stack {
             },
         });
 
-        new EcsService(this, "ClarkGatewayService", {
+        const clarkGatewayService = new EcsService(this, "ClarkGatewayService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/clark-gateway:${tag}`,
             albRouting: {
@@ -176,6 +176,11 @@ export class ClarkStack extends Stack {
                 },
             },
         });
+        clarkService.service.node.addDependency(standardGuidelinesService.service);
+        hierarchyService.service.node.addDependency(clarkService.service);
+        clarkGatewayService.service.node.addDependency(clarkService.service);
+        clarkGatewayService.service.node.addDependency(hierarchyService.service);
+        clarkGatewayService.service.node.addDependency(standardGuidelinesService.service);
 
         const eventPattern: EventPattern = {
             detailType: [
