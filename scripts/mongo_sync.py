@@ -44,6 +44,10 @@ SOURCE_CHOICES = {
     "Legacy prod SSM connection strings": "legacy",
     "Current prod Secrets Manager connection strings": "current",
 }
+STAGING_SOURCE_CHOICES = {
+    "Legacy staging SSM connection strings": "legacy",
+    "Current staging Secrets Manager connection strings": "current",
+}
 TARGET_CHOICES = {
     "Staging": "staging",
     "Local": "local",
@@ -60,7 +64,7 @@ USER_COLLECTIONS = {
     "clark": ("onion", "users"),
     "competency": ("secured-auth", "users"),
 }
-ALL_APPS = {"clark", "competency", "card"}
+ALL_APPS = {"clark", "competency"}
 
 log = logging.getLogger("mongo-sync")
 
@@ -114,13 +118,30 @@ def prompt_args() -> SimpleNamespace:
     )["target"]
     source = SOURCE_CHOICES[source_label]
     target = TARGET_CHOICES[target_label]
+    target_source = "local"
+    if target == "staging":
+        staging_source_label = ask(
+            [
+                inquirer.List(
+                    "target_source",
+                    message="Which staging connection string source?",
+                    choices=tuple(STAGING_SOURCE_CHOICES),
+                )
+            ]
+        )["target_source"]
+        target_source = STAGING_SOURCE_CHOICES[staging_source_label]
 
     return SimpleNamespace(
         source=source,
+        target_source=target_source,
         target=target,
         func=run_selected_workflow,
-        apps=DEFAULT_APPS,
-        legacy_ssm_profile=find_legacy_ssm_profile() if source == "legacy" else None,
+        apps=prompt_apps(),
+        legacy_ssm_profile=(
+            find_legacy_ssm_profile()
+            if "legacy" in (source, target_source)
+            else None
+        ),
         source_profile=find_profile_for_role(PROD_MONGO_AUTH_ROLE_ARN),
         target_profile=(
             find_profile_for_role(STAGING_MONGO_AUTH_ROLE_ARN)
@@ -130,6 +151,20 @@ def prompt_args() -> SimpleNamespace:
         backup_path=Path("mongo-backups") / time.strftime("%Y%m%d-%H%M%S"),
         mock_password_value=MOCK_PASSWORD,
     )
+
+
+def prompt_apps() -> tuple[str, ...]:
+    answers = ask(
+        [
+            inquirer.Checkbox(
+                "apps",
+                message="Apps to process",
+                choices=DEFAULT_APPS,
+                default=list(DEFAULT_APPS),
+            )
+        ]
+    )
+    return app_list(answers["apps"])
 
 
 def ask(questions: Sequence[Any]) -> dict[str, Any]:
@@ -172,14 +207,22 @@ def backup_prod(args: SimpleNamespace, apps: Sequence[str]) -> Path:
         "source_store": "legacy-ssm" if args.source == "legacy" else "secrets-manager",
         "source_mongo_auth_role_arn": PROD_MONGO_AUTH_ROLE_ARN,
         "target": args.target,
+        "target_store": (
+            "legacy-ssm"
+            if args.target == "staging" and args.target_source == "legacy"
+            else "secrets-manager"
+            if args.target == "staging"
+            else "local"
+        ),
         "apps": {},
     }
-    if args.source == "legacy":
+    if "legacy" in (args.source, args.target_source):
         manifest["legacy_ssm_account_id"] = LEGACY_SSM_ACCOUNT_ID
     for app in apps:
         archive = backup_dir / f"{app}.archive.gz"
-        dump(prod_uri(app, args), archive, args.source_profile)
-        manifest["apps"][app] = {"archive": archive.name}
+        log_path = backup_dir / f"{app}.mongodump.log"
+        dump(prod_uri(app, args), archive, args.source_profile, log_path)
+        manifest["apps"][app] = {"archive": archive.name, "dump_log": log_path.name}
 
     (backup_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
@@ -189,8 +232,9 @@ def backup_prod(args: SimpleNamespace, apps: Sequence[str]) -> Path:
 def restore_backup(args: SimpleNamespace, apps: Sequence[str]) -> None:
     for app in apps:
         archive = args.backup_path / f"{app}.archive.gz"
-        uri = target_uri(app, args.target, args.target_profile)
-        restore(uri, archive, args.target_profile)
+        uri = target_uri(app, args)
+        log_path = args.backup_path / f"{app}.mongorestore.{args.target}.log"
+        restore(uri, archive, args.target_profile, log_path)
         mock_app_passwords(app, uri, args.target_profile, args.mock_password_value)
 
 
@@ -357,12 +401,14 @@ def prod_uri(app: str, args: SimpleNamespace) -> str:
     return mongo_uri(secret_uri(app, "prd", args.source_profile))
 
 
-def target_uri(app: str, target: str, target_profile: str | None) -> str:
-    if target == "local":
+def target_uri(app: str, args: SimpleNamespace) -> str:
+    if args.target == "local":
         return LOCAL_URI
-    if target == "staging":
-        return mongo_uri(secret_uri(app, "stg", target_profile))
-    raise SyncError(f"Unsupported restore target: {target}")
+    if args.target == "staging" and args.target_source == "legacy":
+        return mongo_uri(ssm_uri(app, "stg", args.legacy_ssm_profile))
+    if args.target == "staging":
+        return mongo_uri(secret_uri(app, "stg", args.target_profile))
+    raise SyncError(f"Unsupported restore target: {args.target}")
 
 
 def secret_uri(app: str, env: str, profile: str | None) -> str:
@@ -494,15 +540,16 @@ def atlas_env(uri: str, profile: str | None) -> Iterator[None]:
                 os.environ[key] = value
 
 
-def dump(uri: str, archive: Path, profile: str | None) -> None:
+def dump(uri: str, archive: Path, profile: str | None, log_path: Path) -> None:
     run(
-        ["mongodump", f"--uri={uri}", f"--archive={archive}", "--gzip", "--quiet"],
+        ["mongodump", f"--uri={uri}", f"--archive={archive}", "--gzip"],
         uri,
         profile,
+        log_path,
     )
 
 
-def restore(uri: str, archive: Path, profile: str | None) -> None:
+def restore(uri: str, archive: Path, profile: str | None, log_path: Path) -> None:
     if not archive.exists():
         raise SyncError(f"Backup archive does not exist: {archive}")
     run(
@@ -512,22 +559,36 @@ def restore(uri: str, archive: Path, profile: str | None) -> None:
             f"--archive={archive}",
             "--gzip",
             "--drop",
-            "--quiet",
+            "--nsExclude=config.*",
         ],
         uri,
         profile,
+        log_path,
     )
 
 
-def run(command: list[str], uri: str, profile: str | None) -> None:
+def run(command: list[str], uri: str, profile: str | None, log_path: Path) -> None:
     log.info("Running: %s", redact_command(command))
+    log.info("Writing command output to %s.", log_path)
     with atlas_env(uri, profile):
-        try:
-            subprocess.run(command, check=True)
-        except subprocess.CalledProcessError as exc:
-            raise SyncError(
-                f"{command[0]} failed with exit code {exc.returncode}."
-            ) from exc
+        with log_path.open("w") as output:
+            output.write(f"$ {redact_command(command)}\n\n")
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                output.write(line)
+                output.flush()
+                sys.stdout.write(line)
+                sys.stdout.flush()
+            exit_code = process.wait()
+    if exit_code != 0:
+        raise SyncError(f"{command[0]} failed with exit code {exit_code}. See {log_path}.")
 
 
 def mock_app_passwords(app: str, uri: str, profile: str | None, password: str) -> None:

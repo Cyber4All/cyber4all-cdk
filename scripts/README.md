@@ -10,34 +10,54 @@ The script is intentionally narrow. It backs up prod, restores that fresh
 backup to staging or local, and always mocks app user passwords after
 `mongorestore`.
 
-The only prompts are:
+The prompts are:
 
 - Whether prod uses legacy SSM connection strings or current Secrets Manager
   connection strings.
+- Which apps to back up and restore: `clark`, `competency`, or both.
 - Whether to restore the prod backup to staging or local.
+- For staging restores, whether staging uses legacy SSM connection strings or
+  current Secrets Manager connection strings.
 
 Connection strings are fixed by workflow:
 
 ```text
 legacy prod source:  /prod/{app}/mongo/connection-string in cyber4all-dev account 842676000360
 current prod source: /cyber4all/mongodb/prd-cyber4all-{app}-cluster-use1/connection
-staging target:      /cyber4all/mongodb/stg-cyber4all-{app}-cluster-use1/connection
+legacy staging:      /staging/{app}/mongo/connection-string in cyber4all-dev account 842676000360
+current staging:     /cyber4all/mongodb/stg-cyber4all-{app}-cluster-use1/connection
 local target:        mongodb://localhost:27017
 ```
 
 Secrets Manager connection secrets are expected to be JSON and the script reads
 the `MONGODB_URI` field.
 
+Each run writes archives and MongoDB tool logs to `mongo-backups/<timestamp>`:
+
+```text
+clark.archive.gz
+clark.mongodump.log
+clark.mongorestore.staging.log
+competency.archive.gz
+competency.mongodump.log
+competency.mongorestore.staging.log
+manifest.json
+```
+
+Restores exclude `config.*` namespaces because Atlas does not allow this role to
+create collections in the internal `config` database, and those namespaces are
+not application data.
+
 ## AWS Profiles And Access
 
-Prod legacy SSM parameters live in the cyber4all-dev account
-`842676000360`. The script reads `~/.aws/config` and chooses a profile for that
-account automatically when legacy mode is selected.
+Legacy SSM parameters live in the cyber4all-dev account `842676000360`. The
+script reads `~/.aws/config` and chooses a profile for that account
+automatically whenever a legacy prod or staging connection string is selected.
 
 The script also reads `~/.aws/config` to find the prod and staging SSO profiles
-matching the Atlas IAM database users below. For staging restores, the staging
-profile is used both to read the new Secrets Manager connection string and to
-authenticate to MongoDB when the URI uses `MONGODB-AWS`.
+matching the Atlas IAM database users below. For current staging restores, the
+staging profile reads the new Secrets Manager connection string. For all
+staging restores, it authenticates to MongoDB when the URI uses `MONGODB-AWS`.
 
 The script verifies the selected MongoDB auth profiles with STS before running:
 
