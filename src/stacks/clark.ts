@@ -15,6 +15,7 @@ import { SharedAlb } from "../constructs/shared-alb";
 import { getClarkRuntimeConfig } from "../shared/clark-config";
 import { getServiceConnectUri } from "../shared/ecs";
 import { Application, Environment, getEnvironmentName } from "../shared/types";
+import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 
 export interface ClarkStackProps extends StackProps {
     readonly environment: Environment;
@@ -135,6 +136,24 @@ export class ClarkStack extends Stack {
                 },
             },
         });
+
+        clarkService.taskDefinition.taskRole.addToPrincipalPolicy(
+            new PolicyStatement({
+                actions: ["cognito-identity:GetOpenIdTokenForDeveloperIdentity"],
+                resources: [
+                    Stack.of(this).formatArn({
+                        service: "cognito-identity",
+                        resource: "identitypool",
+                        resourceName: clarkConfig.cognitoIdentityPoolId,
+                    }),
+                    Stack.of(this).formatArn({
+                        service: "cognito-identity",
+                        resource: "identitypool",
+                        resourceName: clarkConfig.cognitoAdminIdentityPoolId,
+                    })
+                ]
+            })
+        );
 
         const hierarchyService = new EcsService(this, "HierarchyService", {
             ...defaultServiceProps,
