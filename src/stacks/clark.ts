@@ -139,7 +139,15 @@ export class ClarkStack extends Stack {
 
         clarkService.taskDefinition.taskRole.addToPrincipalPolicy(
             new PolicyStatement({
-                actions: ["cognito-identity:GetOpenIdTokenForDeveloperIdentity"],
+                actions: [
+                    "cognito-identity:GetOpenIdTokenForDeveloperIdentity",
+                    "s3:ListBucket",
+                    "s3:DeleteObject",
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "events:PutEvents",
+
+                ],
                 resources: [
                     Stack.of(this).formatArn({
                         service: "cognito-identity",
@@ -150,10 +158,30 @@ export class ClarkStack extends Stack {
                         service: "cognito-identity",
                         resource: "identitypool",
                         resourceName: clarkConfig.cognitoAdminIdentityPoolId,
-                    })
+                    }),
+                    `arn:aws:s3:::${clarkConfig.clarkFileUploadsBucketName}/*`,
+                    `arn:aws:s3:::${clarkConfig.clarkFileUploadsBucketName}`,
+                    `arn:aws:s3:::${clarkConfig.clarkReportsBucketName}/*`,
+                    Stack.of(this).formatArn({
+                        service: "events",
+                        resource: "event-bus",
+                        resourceName: "default"
+                    }),
                 ]
             })
         );
+
+        clarkService.taskDefinition.taskRole.addToPrincipalPolicy(
+            new PolicyStatement({
+                actions: [
+                    "bedrock:*",
+                    "kendra:*"
+                ],
+                resources: [
+                    "*"
+                ]
+            })
+        )
 
         const hierarchyService = new EcsService(this, "HierarchyService", {
             ...defaultServiceProps,
@@ -209,7 +237,7 @@ export class ClarkStack extends Stack {
             source: ["clark-bundling-service-fargate-instance"],
         };
 
-        new EventDrivenEcsTask(this, "ClarkBundlingService", {
+        const bundlingService = new EventDrivenEcsTask(this, "ClarkBundlingService", {
             environment: props.environment,
             imageRepository: `cyber4all/clark-bundling-service:${tag}`,
             dockerCredentials: props.dockerHubSecret,
@@ -221,9 +249,12 @@ export class ClarkStack extends Stack {
                     EPHEMERAL_STORAGE_THRESHOLD: "80",
                     BUCKET: clarkConfig.clarkFileUploadsBucketName,
                     GO_ENV: nodeEnv,
+                    CORALOGIX_LOG_URL: "https://api.coralogix.us/api/v1/logs",
+                    TASK_DEFINITION: "stg-clark-bundling-service-use1-c82606c3"
                 },
                 secrets: {
                     DB_URI: mongoDbUriSecret,
+                    CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret, "PRIVATE_KEY"),
                 },
             },
             otelSidecarOptions: {
@@ -233,5 +264,36 @@ export class ClarkStack extends Stack {
                 otelConfigS3Url: props.otelConfigS3Url,
             },
         });
+
+        bundlingService.taskDefinition.taskRole.addToPrincipalPolicy(
+            new PolicyStatement({
+                actions: [
+                    "events:PutEvents",
+                    "s3:PutObject",
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                    "s3:DeleteBucket"
+                ],
+                resources: [
+                    `arn:aws:s3:::${clarkConfig.clarkFileUploadsBucketName}/*`,
+                    `arn:aws:s3:::${clarkConfig.clarkFileUploadsBucketName}`,
+                    Stack.of(this).formatArn({
+                        service: "events",
+                        resource: "event-bus",
+                        resourceName: "default"
+                    }),
+                ]
+            }),
+        );
+        bundlingService.taskDefinition.taskRole.addToPrincipalPolicy(
+            new PolicyStatement({
+                actions: [
+                    "ecs:DescribeTaskDefinition"
+                ],
+                resources: [
+                    "*"
+                ]
+            })
+        );
     }
 }
