@@ -200,6 +200,32 @@ export class ClarkStack extends Stack {
             },
         });
 
+        const clarkMCPServer = new EcsService(this, "ClarkMCPServer", {
+            ...defaultServiceProps,
+            imageRepository: `cyber4all/clark-mcp-server:${tag}`,
+            containerOptions: {
+                environment: {
+                    PORT: "8000",
+                    DOCLING_BASE_URL: "http://doclingService:5001",
+                    GATEWAY_URI: "https://api.staging.clark.center"
+                }
+            }
+        });
+
+        const doclingService = new EcsService(this, "DoclingService", {
+            ...defaultServiceProps,
+            taskCpu: 2048,
+            taskMemoryLimitMiB: 4096,
+            imageRepository: `quay.io/docling-project/docling-serve`,
+            containerOptions: {
+                environment: {
+                    PORT: "5001",
+                    DOCLING_BASE_URL: "http://localhost:8000",
+                    DOCLING_SERVE_ENABLE_UI: "1"
+                }
+            }
+        });
+
         const clarkGatewayService = new EcsService(this, "ClarkGatewayService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/clark-gateway:${tag}`,
@@ -214,6 +240,7 @@ export class ClarkStack extends Stack {
                     CLARK_SERVICE_URI: getServiceConnectUri(clarkService.serviceName),
                     HIERARCHY_SERVICE_URI: getServiceConnectUri(hierarchyService.serviceName),
                     STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceName),
+                    MCP_SERVICE_URI: `http://clark_mcp_server:8000`,
                     ISSUER: clarkConfig.clarkIssuer,
                     NODE_ENV: nodeEnv,
                 },
@@ -228,6 +255,8 @@ export class ClarkStack extends Stack {
         clarkGatewayService.service.node.addDependency(clarkService.service);
         clarkGatewayService.service.node.addDependency(hierarchyService.service);
         clarkGatewayService.service.node.addDependency(standardGuidelinesService.service);
+        doclingService.service.node.addDependency(clarkGatewayService);
+        clarkMCPServer.service.node.addDependency(clarkGatewayService);
 
         const eventPattern: EventPattern = {
             detailType: [
