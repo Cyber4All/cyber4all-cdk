@@ -13,7 +13,7 @@ import { EventDrivenEcsTask } from "../constructs/event-driven-ecs-task";
 import { MongoDBCluster } from "../constructs/mongodb-cluster";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getClarkRuntimeConfig } from "../shared/clark-config";
-import { getServiceConnectUri } from "../shared/ecs";
+import { getServiceConnectUri, getServiceConnectUriWithPort } from "../shared/ecs";
 import { Application, Environment, getEnvironmentName } from "../shared/types";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 
@@ -240,7 +240,7 @@ export class ClarkStack extends Stack {
                     CLARK_SERVICE_URI: getServiceConnectUri(clarkService.serviceName),
                     HIERARCHY_SERVICE_URI: getServiceConnectUri(hierarchyService.serviceName),
                     STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceName),
-                    MCP_SERVICE_URI: `http://clark_mcp_server:8000`,
+                    MCP_SERVICE_URI: getServiceConnectUriWithPort(clarkMCPServer.serviceName, "8000"),
                     ISSUER: clarkConfig.clarkIssuer,
                     NODE_ENV: nodeEnv,
                 },
