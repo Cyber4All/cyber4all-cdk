@@ -200,6 +200,21 @@ export class ClarkStack extends Stack {
             },
         });
 
+        const doclingService = new EcsService(this, "DoclingService", {
+            ...defaultServiceProps,
+            taskCpu: 2048,
+            taskMemoryLimitMiB: 4096,
+            imageRepository: `quay.io/docling-project/docling-serve`,
+            containerPort: 5001,
+            containerOptions: {
+                environment: {
+                    PORT: "5001",
+                    DOCLING_BASE_URL: "http://localhost:8000",
+                    DOCLING_SERVE_ENABLE_UI: "1"
+                }
+            }
+        });
+
         const clarkMCPServer = new EcsService(this, "ClarkMCPServer", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/clark-mcp-server:${tag}`,
@@ -207,22 +222,8 @@ export class ClarkStack extends Stack {
             containerOptions: {
                 environment: {
                     PORT: "8000",
-                    DOCLING_BASE_URL: "http://doclingService:5001",
+                    DOCLING_BASE_URL: getServiceConnectUriWithPort(doclingService.serviceName, "5001"),
                     GATEWAY_URI: "https://api.staging.clark.center"
-                }
-            }
-        });
-
-        const doclingService = new EcsService(this, "DoclingService", {
-            ...defaultServiceProps,
-            taskCpu: 2048,
-            taskMemoryLimitMiB: 4096,
-            imageRepository: `quay.io/docling-project/docling-serve`,
-            containerOptions: {
-                environment: {
-                    PORT: "5001",
-                    DOCLING_BASE_URL: "http://localhost:8000",
-                    DOCLING_SERVE_ENABLE_UI: "1"
                 }
             }
         });
