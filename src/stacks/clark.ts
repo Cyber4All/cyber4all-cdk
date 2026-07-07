@@ -203,6 +203,7 @@ export class ClarkStack extends Stack {
         const clarkMCPServer = new EcsService(this, "ClarkMCPServer", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/clark-mcp-server:${tag}`,
+            containerPort: 8000,
             containerOptions: {
                 environment: {
                     PORT: "8000",
