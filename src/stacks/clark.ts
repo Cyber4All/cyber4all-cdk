@@ -13,7 +13,7 @@ import { EventDrivenEcsTask } from "../constructs/event-driven-ecs-task";
 import { MongoDBCluster } from "../constructs/mongodb-cluster";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getClarkRuntimeConfig } from "../shared/clark-config";
-import { getServiceConnectUri } from "../shared/ecs";
+import { getServiceConnectUri, getServiceConnectUriWithPort } from "../shared/ecs";
 import { Application, Environment, getEnvironmentName } from "../shared/types";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 
@@ -200,6 +200,34 @@ export class ClarkStack extends Stack {
             },
         });
 
+        const doclingService = new EcsService(this, "DoclingService", {
+            ...defaultServiceProps,
+            taskCpu: 2048,
+            taskMemoryLimitMiB: 4096,
+            imageRepository: `quay.io/docling-project/docling-serve`,
+            containerPort: 5001,
+            containerOptions: {
+                environment: {
+                    PORT: "5001",
+                    DOCLING_BASE_URL: "http://localhost:8000",
+                    DOCLING_SERVE_ENABLE_UI: "1"
+                }
+            }
+        });
+
+        const clarkMCPServer = new EcsService(this, "ClarkMCPServer", {
+            ...defaultServiceProps,
+            imageRepository: `cyber4all/clark-mcp-server:${tag}`,
+            containerPort: 8000,
+            containerOptions: {
+                environment: {
+                    PORT: "8000",
+                    DOCLING_BASE_URL: getServiceConnectUriWithPort(doclingService.serviceName, "5001"),
+                    GATEWAY_URI: "https://api.staging.clark.center"
+                }
+            }
+        });
+
         const clarkGatewayService = new EcsService(this, "ClarkGatewayService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/clark-gateway:${tag}`,
@@ -214,6 +242,7 @@ export class ClarkStack extends Stack {
                     CLARK_SERVICE_URI: getServiceConnectUri(clarkService.serviceName),
                     HIERARCHY_SERVICE_URI: getServiceConnectUri(hierarchyService.serviceName),
                     STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceName),
+                    MCP_SERVICE_URI: getServiceConnectUriWithPort(clarkMCPServer.serviceName, "8000"),
                     ISSUER: clarkConfig.clarkIssuer,
                     NODE_ENV: nodeEnv,
                 },
@@ -228,6 +257,8 @@ export class ClarkStack extends Stack {
         clarkGatewayService.service.node.addDependency(clarkService.service);
         clarkGatewayService.service.node.addDependency(hierarchyService.service);
         clarkGatewayService.service.node.addDependency(standardGuidelinesService.service);
+        doclingService.service.node.addDependency(clarkGatewayService);
+        clarkMCPServer.service.node.addDependency(clarkGatewayService);
 
         const eventPattern: EventPattern = {
             detailType: [

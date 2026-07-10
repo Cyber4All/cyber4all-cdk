@@ -119,6 +119,8 @@ export interface EcsServiceProps {
 
     /** Fargate task memory in MiB. Defaults to 1024. */
     readonly taskMemoryLimitMiB?: number;
+
+    readonly containerPort?: number;
 }
 
 export class EcsService extends Construct {
@@ -142,7 +144,7 @@ export class EcsService extends Construct {
         // (e.g. stg-clark-service-use1) so other services can resolve it via short name.
         this.serviceName = `${this.baseName}-${imageName}-${this.regionShortName}`;
         const resourceName = `${this.baseName}-${imageName}-${this.regionShortName}-${this.uniqueSuffix}`;
-        const containerPort = 3000;
+        const containerPort = props.containerPort ?? 3000;
 
         const executionRole = new Role(this, "ExecutionRole", {
             roleName: `${this.baseName}-${imageName}-execution-role-${this.regionShortName}-${this.uniqueSuffix}`,
