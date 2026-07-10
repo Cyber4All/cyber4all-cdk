@@ -86,6 +86,7 @@ export class EventDrivenEcsTask extends Construct {
             cpu: props.taskCpu ?? 512,
             memoryLimitMiB: props.taskMemoryLimitMiB ?? 1024,
             taskRole,
+            ephemeralStorageGiB: 150
         });
 
         const logDriver = new AwsLogDriver({

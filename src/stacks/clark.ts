@@ -13,7 +13,7 @@ import { EventDrivenEcsTask } from "../constructs/event-driven-ecs-task";
 import { MongoDBCluster } from "../constructs/mongodb-cluster";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getClarkRuntimeConfig } from "../shared/clark-config";
-import { getServiceConnectUri } from "../shared/ecs";
+import { getServiceConnectUri, getServiceConnectUriWithPort } from "../shared/ecs";
 import { Application, Environment, getEnvironmentName } from "../shared/types";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 
@@ -139,7 +139,15 @@ export class ClarkStack extends Stack {
 
         clarkService.taskDefinition.taskRole.addToPrincipalPolicy(
             new PolicyStatement({
-                actions: ["cognito-identity:GetOpenIdTokenForDeveloperIdentity"],
+                actions: [
+                    "cognito-identity:GetOpenIdTokenForDeveloperIdentity",
+                    "s3:ListBucket",
+                    "s3:DeleteObject",
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "events:PutEvents",
+
+                ],
                 resources: [
                     Stack.of(this).formatArn({
                         service: "cognito-identity",
@@ -150,10 +158,30 @@ export class ClarkStack extends Stack {
                         service: "cognito-identity",
                         resource: "identitypool",
                         resourceName: clarkConfig.cognitoAdminIdentityPoolId,
-                    })
+                    }),
+                    `arn:aws:s3:::${clarkConfig.clarkFileUploadsBucketName}/*`,
+                    `arn:aws:s3:::${clarkConfig.clarkFileUploadsBucketName}`,
+                    `arn:aws:s3:::${clarkConfig.clarkReportsBucketName}/*`,
+                    Stack.of(this).formatArn({
+                        service: "events",
+                        resource: "event-bus",
+                        resourceName: "default"
+                    }),
                 ]
             })
         );
+
+        clarkService.taskDefinition.taskRole.addToPrincipalPolicy(
+            new PolicyStatement({
+                actions: [
+                    "bedrock:*",
+                    "kendra:*"
+                ],
+                resources: [
+                    "*"
+                ]
+            })
+        )
 
         const hierarchyService = new EcsService(this, "HierarchyService", {
             ...defaultServiceProps,
@@ -172,6 +200,34 @@ export class ClarkStack extends Stack {
             },
         });
 
+        const doclingService = new EcsService(this, "DoclingService", {
+            ...defaultServiceProps,
+            taskCpu: 2048,
+            taskMemoryLimitMiB: 4096,
+            imageRepository: `quay.io/docling-project/docling-serve`,
+            containerPort: 5001,
+            containerOptions: {
+                environment: {
+                    PORT: "5001",
+                    DOCLING_BASE_URL: "http://localhost:8000",
+                    DOCLING_SERVE_ENABLE_UI: "1"
+                }
+            }
+        });
+
+        const clarkMCPServer = new EcsService(this, "ClarkMCPServer", {
+            ...defaultServiceProps,
+            imageRepository: `cyber4all/clark-mcp-server:${tag}`,
+            containerPort: 8000,
+            containerOptions: {
+                environment: {
+                    PORT: "8000",
+                    DOCLING_BASE_URL: getServiceConnectUriWithPort(doclingService.serviceName, "5001"),
+                    GATEWAY_URI: "https://api.staging.clark.center"
+                }
+            }
+        });
+
         const clarkGatewayService = new EcsService(this, "ClarkGatewayService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/clark-gateway:${tag}`,
@@ -186,6 +242,7 @@ export class ClarkStack extends Stack {
                     CLARK_SERVICE_URI: getServiceConnectUri(clarkService.serviceName),
                     HIERARCHY_SERVICE_URI: getServiceConnectUri(hierarchyService.serviceName),
                     STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceName),
+                    MCP_SERVICE_URI: getServiceConnectUriWithPort(clarkMCPServer.serviceName, "8000"),
                     ISSUER: clarkConfig.clarkIssuer,
                     NODE_ENV: nodeEnv,
                 },
@@ -200,6 +257,8 @@ export class ClarkStack extends Stack {
         clarkGatewayService.service.node.addDependency(clarkService.service);
         clarkGatewayService.service.node.addDependency(hierarchyService.service);
         clarkGatewayService.service.node.addDependency(standardGuidelinesService.service);
+        doclingService.service.node.addDependency(clarkGatewayService);
+        clarkMCPServer.service.node.addDependency(clarkGatewayService);
 
         const eventPattern: EventPattern = {
             detailType: [
@@ -209,7 +268,7 @@ export class ClarkStack extends Stack {
             source: ["clark-bundling-service-fargate-instance"],
         };
 
-        new EventDrivenEcsTask(this, "ClarkBundlingService", {
+        const bundlingService = new EventDrivenEcsTask(this, "ClarkBundlingService", {
             environment: props.environment,
             imageRepository: `cyber4all/clark-bundling-service:${tag}`,
             dockerCredentials: props.dockerHubSecret,
@@ -221,9 +280,12 @@ export class ClarkStack extends Stack {
                     EPHEMERAL_STORAGE_THRESHOLD: "80",
                     BUCKET: clarkConfig.clarkFileUploadsBucketName,
                     GO_ENV: nodeEnv,
+                    CORALOGIX_LOG_URL: "https://api.coralogix.us/api/v1/logs",
+                    TASK_DEFINITION: "stg-clark-bundling-service-use1-c82606c3"
                 },
                 secrets: {
                     DB_URI: mongoDbUriSecret,
+                    CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret, "PRIVATE_KEY"),
                 },
             },
             otelSidecarOptions: {
@@ -233,5 +295,36 @@ export class ClarkStack extends Stack {
                 otelConfigS3Url: props.otelConfigS3Url,
             },
         });
+
+        bundlingService.taskDefinition.taskRole.addToPrincipalPolicy(
+            new PolicyStatement({
+                actions: [
+                    "events:PutEvents",
+                    "s3:PutObject",
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                    "s3:DeleteBucket"
+                ],
+                resources: [
+                    `arn:aws:s3:::${clarkConfig.clarkFileUploadsBucketName}/*`,
+                    `arn:aws:s3:::${clarkConfig.clarkFileUploadsBucketName}`,
+                    Stack.of(this).formatArn({
+                        service: "events",
+                        resource: "event-bus",
+                        resourceName: "default"
+                    }),
+                ]
+            }),
+        );
+        bundlingService.taskDefinition.taskRole.addToPrincipalPolicy(
+            new PolicyStatement({
+                actions: [
+                    "ecs:DescribeTaskDefinition"
+                ],
+                resources: [
+                    "*"
+                ]
+            })
+        );
     }
 }
