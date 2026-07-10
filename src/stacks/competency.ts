@@ -1,4 +1,4 @@
-import { RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
+import { RemovalPolicy, SecretValue, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret } from "aws-cdk-lib/aws-ecs";
 import { IBucket } from "aws-cdk-lib/aws-s3";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
@@ -36,10 +36,22 @@ export class CompetencyStack extends Stack {
         const competencySecret = new Secret(this, "CompetencySecret", {
             secretName: `/${props.environment}/cyber4all/competency`,
             description: "Competency service secrets (AWS_API_KEY_SECRET, AWS_JWT_SECRET, AWS_SERVICE_KEY_SECRET, OTA_CODE_SECRET).",
+            secretObjectValue: {
+                AWS_API_KEY_SECRET: SecretValue.unsafePlainText("placeholder"),
+                AWS_JWT_SECRET: SecretValue.unsafePlainText("placeholder"),
+                AWS_SERVICE_KEY_SECRET: SecretValue.unsafePlainText("placeholder"),
+                OTA_CODE_SECRET: SecretValue.unsafePlainText("placeholder"),
+            },
             removalPolicy: RemovalPolicy.DESTROY,
         });
 
         const mongoDbUriSecret = EcsSecret.fromSecretsManager(props.mongoCluster.connectionSecret, "MONGODB_URI");
+        const awsApiKeySecret = EcsSecret.fromSecretsManager(competencySecret, "AWS_API_KEY_SECRET");
+        const awsJwtSecret = EcsSecret.fromSecretsManager(competencySecret, "AWS_JWT_SECRET");
+        const awsServiceKeySecret = EcsSecret.fromSecretsManager(competencySecret, "AWS_SERVICE_KEY_SECRET");
+        const otaCodeSecret = EcsSecret.fromSecretsManager(competencySecret, "OTA_CODE_SECRET");
+        const sendgridApiKeySecret = EcsSecret.fromSecretsManager(props.sendGridSecret, "SENDGRID_API_KEY");
+        const coralogixPrivateKeySecret = EcsSecret.fromSecretsManager(props.coralogixSecret, "PRIVATE_KEY");
 
         const defaultServiceProps = {
             environment: props.environment,
@@ -67,12 +79,13 @@ export class CompetencyStack extends Stack {
                     ISSUER: competencyConfig.securedAuthIssuer,
                 },
                 secrets: {
-                    AWS_API_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_API_KEY_SECRET"),
-                    AWS_JWT_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_JWT_SECRET"),
-                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_SERVICE_KEY_SECRET"),
-                    OTA_CODE_SECRET: EcsSecret.fromSecretsManager(competencySecret, "OTA_CODE_SECRET"),
+                    AWS_API_KEY_SECRET: awsApiKeySecret,
+                    AWS_JWT_SECRET: awsJwtSecret,
+                    AWS_SERVICE_KEY_SECRET: awsServiceKeySecret,
+                    OTA_CODE_SECRET: otaCodeSecret,
                     DB_URI: mongoDbUriSecret,
-                    SENDGRID_API_KEY: EcsSecret.fromSecretsManager(props.sendGridSecret, "SENDGRID_API_KEY"),
+                    SENDGRID_API_KEY: sendgridApiKeySecret,
+                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
                 },
             },
         });
@@ -91,8 +104,9 @@ export class CompetencyStack extends Stack {
                     NODE_ENV: nodeEnv,
                 },
                 secrets: {
-                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_SERVICE_KEY_SECRET"),
+                    AWS_SERVICE_KEY_SECRET: awsServiceKeySecret,
                     DB_URI: mongoDbUriSecret,
+                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
                 },
             },
         });
@@ -113,7 +127,8 @@ export class CompetencyStack extends Stack {
                     NODE_ENV: nodeEnv,
                 },
                 secrets: {
-                    AWS_SERVICE_KEY_SECRET: EcsSecret.fromSecretsManager(competencySecret, "AWS_SERVICE_KEY_SECRET"),
+                    AWS_SERVICE_KEY_SECRET: awsServiceKeySecret,
+                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
                 },
             },
         });

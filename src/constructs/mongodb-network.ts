@@ -86,7 +86,12 @@ export class MongoDBNetwork extends Construct {
         const vpcEndpoint = new CfnVPCEndpoint(this, "AwsVpcEndpoint", {
             vpcId: props.vpc.vpcId,
             vpcEndpointType: "Interface",
-            privateDnsEnabled: true,
+            // Private DNS cannot be enabled until the endpoint connection is accepted
+            // by the service owner. Create the endpoint first without Private DNS
+            // to avoid the "Private DNS can only be enabled after the endpoint
+            // connection is accepted" error. Enable Private DNS in a subsequent
+            // update after the provider-side acceptance if desired.
+            privateDnsEnabled: false,
             serviceName: endpointService.attrEndpointServiceName,
             subnetIds: props.vpc.privateSubnets.map(subnet => subnet.subnetId),
             securityGroupIds: [securityGroup.securityGroupId],

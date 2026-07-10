@@ -119,6 +119,10 @@ export class EventDrivenEcsTask extends Construct {
             environment: {
                 ...otelEnvironment,
                 ...props.containerOptions?.environment,
+                // TODO: This isn't the best solution, but we need this ENV for clark-bundling-service to ref itself. 
+                // This can't be set in the stack because it uses UniqueSuffix. The proper solution would be to fix
+                // clark-bundling-service to not need the TaskDefinition name directly to calculate size threshold.
+                TASK_DEFINITION: resourceName
             },
             secrets: props.containerOptions?.secrets,
             cpu: props.containerOptions?.cpu ?? 0,

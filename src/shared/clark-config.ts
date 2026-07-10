@@ -2,6 +2,7 @@ import { Environment } from "./types";
 
 type ClarkRuntimeConfig = {
     readonly clientUri: string;
+    readonly cardClientUri: string;
     readonly clientCookieDomain: string;
     readonly gatewayUri: string;
     readonly standardGuidelinesClientUrl: string;
@@ -22,6 +23,7 @@ export function getClarkRuntimeConfig(environment: Environment): ClarkRuntimeCon
         case Environment.PROD:
             return {
                 clientUri: `https://${PROD_CLARK_DOMAIN}`,
+                cardClientUri: `https://caeresource.${PROD_CLARK_DOMAIN}`,
                 clientCookieDomain: PROD_CLARK_DOMAIN,
                 gatewayUri: `https://api.${PROD_CLARK_DOMAIN}`,
                 standardGuidelinesClientUrl: `https://api.${PROD_CLARK_DOMAIN}`,
@@ -36,6 +38,7 @@ export function getClarkRuntimeConfig(environment: Environment): ClarkRuntimeCon
         case Environment.STAGING:
             return {
                 clientUri: `https://${STAGING_CLARK_DOMAIN}`,
+                cardClientUri: `https://caeresource.${STAGING_CLARK_DOMAIN}`,
                 clientCookieDomain: STAGING_CLARK_DOMAIN,
                 gatewayUri: `https://api.${STAGING_CLARK_DOMAIN}`,
                 standardGuidelinesClientUrl: `https://api.${STAGING_CLARK_DOMAIN}`,

@@ -1,6 +1,7 @@
 import { RemovalPolicy, SecretValue, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret } from "aws-cdk-lib/aws-ecs";
 import { EventPattern } from "aws-cdk-lib/aws-events";
+import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { IBucket } from "aws-cdk-lib/aws-s3";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
@@ -15,7 +16,6 @@ import { SharedAlb } from "../constructs/shared-alb";
 import { getClarkRuntimeConfig } from "../shared/clark-config";
 import { getServiceConnectUri, getServiceConnectUriWithPort } from "../shared/ecs";
 import { Application, Environment, getEnvironmentName } from "../shared/types";
-import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 
 export interface ClarkStackProps extends StackProps {
     readonly environment: Environment;
@@ -51,10 +51,16 @@ export class ClarkStack extends Stack {
                 SECRET_KEY: SecretValue.unsafePlainText("placeholder"),
             },
         });
-        const googleSecret = props.googleSecret;
-        const sendGridSecret = props.sendGridSecret;
-        const shortcutSecret = props.shortcutSecret;
-        const slackSecret = props.slackSecret;
+        const sendgridApiKeySecret = EcsSecret.fromSecretsManager(props.sendGridSecret, "SENDGRID_API_KEY");
+        const sendgridVerifiedUserApiKeySecret = EcsSecret.fromSecretsManager(props.sendGridSecret, "SENDGRID_VERIFIED_USER_API_KEY");
+        const shortcutSecret = EcsSecret.fromSecretsManager(props.shortcutSecret, "SHORTCUT_API_KEY");
+        const slackTokenSecret = EcsSecret.fromSecretsManager(props.slackSecret, "SLACK_TOKEN");
+        const slackUriSecret = EcsSecret.fromSecretsManager(props.slackSecret, "SLACK_URI");
+        const googleClientIdSecret = EcsSecret.fromSecretsManager(props.googleSecret, "GOOGLE_CLIENT_ID")
+        const googleClientSecretSecret = EcsSecret.fromSecretsManager(props.googleSecret, "GOOGLE_CLIENT_SECRET")
+        const googlePrivateKeySecret = EcsSecret.fromSecretsManager(props.googleSecret, "GOOGLE_PRIVATE_KEY")
+        const googleServiceAccountEmailSecret = EcsSecret.fromSecretsManager(props.googleSecret, "GOOGLE_SERVICE_ACCOUNT_EMAIL")
+        const coralogixPrivateKeySecret = EcsSecret.fromSecretsManager(props.coralogixSecret, "PRIVATE_KEY");
         const mongoDbUriSecret = EcsSecret.fromSecretsManager(props.mongoCluster.connectionSecret, "MONGODB_URI");
         const sharedClarkSecret = EcsSecret.fromSecretsManager(clarkSecret, "SECRET_KEY");
 
@@ -90,7 +96,7 @@ export class ClarkStack extends Stack {
                 secrets: {
                     CLARK_DB_URI: mongoDbUriSecret,
                     KEY: sharedClarkSecret,
-                    CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret, "PRIVATE_KEY"),
+                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
                 },
             },
         });
@@ -118,21 +124,16 @@ export class ClarkStack extends Stack {
                 secrets: {
                     SECRET_KEY: sharedClarkSecret,
                     CLARK_DB_URI: mongoDbUriSecret,
-                    GOOGLE_CLIENT_ID: EcsSecret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_ID"),
-                    GOOGLE_CLIENT_SECRET: EcsSecret.fromSecretsManager(googleSecret, "GOOGLE_CLIENT_SECRET"),
-                    GOOGLE_PRIVATE_KEY: EcsSecret.fromSecretsManager(googleSecret, "GOOGLE_PRIVATE_KEY"),
-                    GOOGLE_SERVICE_ACCOUNT_EMAIL: EcsSecret.fromSecretsManager(
-                        googleSecret,
-                        "GOOGLE_SERVICE_ACCOUNT_EMAIL",
-                    ),
-                    SENDGRID_API_KEY: EcsSecret.fromSecretsManager(sendGridSecret, "SENDGRID_API_KEY"),
-                    SENDGRID_VERIFIED_USER_API_KEY: EcsSecret.fromSecretsManager(
-                        sendGridSecret,
-                        "SENDGRID_VERIFIED_USER_API_KEY",
-                    ),
-                    SHORTCUT_API_KEY: EcsSecret.fromSecretsManager(shortcutSecret, "SHORTCUT_API_KEY"),
-                    SLACK_TOKEN: EcsSecret.fromSecretsManager(slackSecret, "SLACK_TOKEN"),
-                    SLACK_URI: EcsSecret.fromSecretsManager(slackSecret, "SLACK_URI"),
+                    GOOGLE_CLIENT_ID: googleClientIdSecret,
+                    GOOGLE_CLIENT_SECRET: googleClientSecretSecret,
+                    GOOGLE_PRIVATE_KEY: googlePrivateKeySecret,
+                    GOOGLE_SERVICE_ACCOUNT_EMAIL: googleServiceAccountEmailSecret,
+                    SENDGRID_API_KEY: sendgridApiKeySecret,
+                    SENDGRID_VERIFIED_USER_API_KEY: sendgridVerifiedUserApiKeySecret,
+                    SHORTCUT_API_KEY: shortcutSecret,
+                    SLACK_TOKEN: slackTokenSecret,
+                    SLACK_URI: slackUriSecret,
+                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
                 },
             },
         });
@@ -200,6 +201,35 @@ export class ClarkStack extends Stack {
             },
         });
 
+        const cardService = new EcsService(this, "CardsService", {
+            ...defaultServiceProps,
+            imageRepository: `cyber4all/cards-service:${tag}`,
+            mongoCluster: props.mongoCluster,
+            containerOptions: {
+                environment: {
+                    "PORT": "3000",
+                    "NODE_ENV": nodeEnv,
+                    "OTA_CODE_ISSUER": clarkConfig.clarkIssuer,
+                    "ISSUER": clarkConfig.clarkIssuer,
+                    "DB_NAME": "CARD",
+                    "CARD_CLIENT_URL": clarkConfig.cardClientUri,
+                    "GATEWAY_URI": clarkConfig.gatewayUri,
+                    "COOKIE_DOMAIN": clarkConfig.cardClientUri
+                },
+                secrets: {
+                    "SERVICE_KEY": sharedClarkSecret,
+                    "SECRET_KEY": sharedClarkSecret,
+                    "OTA_CODE_SECRET": sharedClarkSecret,
+                    "CORALOGIX_PRIVATE_KEY": coralogixPrivateKeySecret,
+                    "SENDGRID_API_KEY": sendgridApiKeySecret,
+                    "GOOGLE_CLIENT_ID": googleClientIdSecret,
+                    "GOOGLE_CLIENT_SECRET": googleClientSecretSecret,
+                    "DB_URI": mongoDbUriSecret,
+                    "SHORTCUT_API_TOKEN": shortcutSecret
+                }
+            }
+        });
+
         const doclingService = new EcsService(this, "DoclingService", {
             ...defaultServiceProps,
             taskCpu: 2048,
@@ -223,7 +253,7 @@ export class ClarkStack extends Stack {
                 environment: {
                     PORT: "8000",
                     DOCLING_BASE_URL: getServiceConnectUriWithPort(doclingService.serviceName, "5001"),
-                    GATEWAY_URI: "https://api.staging.clark.center"
+                    GATEWAY_URI: clarkConfig.gatewayUri
                 }
             }
         });
@@ -248,7 +278,7 @@ export class ClarkStack extends Stack {
                 },
                 secrets: {
                     AWS_JWT_SECRET: sharedClarkSecret,
-                    CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret, "PRIVATE_KEY"),
+                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
                 },
             },
         });
@@ -259,6 +289,7 @@ export class ClarkStack extends Stack {
         clarkGatewayService.service.node.addDependency(standardGuidelinesService.service);
         doclingService.service.node.addDependency(clarkGatewayService);
         clarkMCPServer.service.node.addDependency(clarkGatewayService);
+        clarkMCPServer.service.node.addDependency(doclingService);
 
         const eventPattern: EventPattern = {
             detailType: [
@@ -281,11 +312,10 @@ export class ClarkStack extends Stack {
                     BUCKET: clarkConfig.clarkFileUploadsBucketName,
                     GO_ENV: nodeEnv,
                     CORALOGIX_LOG_URL: "https://api.coralogix.us/api/v1/logs",
-                    TASK_DEFINITION: "stg-clark-bundling-service-use1-c82606c3"
                 },
                 secrets: {
                     DB_URI: mongoDbUriSecret,
-                    CORALOGIX_PRIVATE_KEY: EcsSecret.fromSecretsManager(props.coralogixSecret, "PRIVATE_KEY"),
+                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
                 },
             },
             otelSidecarOptions: {

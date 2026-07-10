@@ -203,6 +203,8 @@ export class MongoDBCluster extends Construct implements IMongoDBCluster {
                         compute: {
                             enabled: true,
                             scaleDownEnabled: true,
+                            minInstanceSize: instanceSize,
+                            maxInstanceSize: "M30",
                         },
                         diskGb: {
                             enabled: true,

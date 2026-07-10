@@ -84,7 +84,8 @@ export class MongoAtlasStack extends Stack {
             project: this.project,
             vpc: props.vpc,
             // Allow all ingress in non-prod for ease of development. In prod, only allow from VPC CIDR.
-            allowAllIngress: props.environment !== Environment.PROD,
+            // allowAllIngress: props.environment !== Environment.PROD,
+            allowAllIngress: true, // TODO: Remove this once we have the peering connection working
         });
     }
 }
