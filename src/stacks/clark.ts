@@ -77,17 +77,20 @@ export class ClarkStack extends Stack {
             environment: props.environment,
             dockerCredentials: props.dockerHubSecret,
             cluster: props.cluster.cluster,
+            enableExecuteCommand: props.environment === Environment.STAGING,
+        };
+        const otelSidecarOptions = {
             otelSidecarOptions: {
                 applicationName: Application.CLARK,
                 coralogixSecret: props.coralogixSecret,
                 otelConfigBucket: props.otelConfigBucket,
                 otelConfigS3Url: props.otelConfigS3Url,
-            },
-            enableExecuteCommand: props.environment === Environment.STAGING,
+            }
         };
 
         const standardGuidelinesService = new EcsService(this, "StandardGuidelinesService", {
             ...defaultServiceProps,
+            ...otelSidecarOptions,
             imageRepository: `cyber4all/standard-guidelines-service:${tag}`,
             mongoCluster: props.mongoCluster,
             containerOptions: {
@@ -212,6 +215,7 @@ export class ClarkStack extends Stack {
 
         const cardsService = new EcsService(this, "CardsService", {
             ...defaultServiceProps,
+            ...otelSidecarOptions,
             imageRepository: `cyber4all/cards-service:${tag}`,
             containerOptions: {
                 environment: {
@@ -268,6 +272,7 @@ export class ClarkStack extends Stack {
 
         const clarkGatewayService = new EcsService(this, "ClarkGatewayService", {
             ...defaultServiceProps,
+            ...otelSidecarOptions,
             imageRepository: `cyber4all/clark-gateway:${tag}`,
             albRouting: {
                 loadBalancer: props.sharedAlb,
