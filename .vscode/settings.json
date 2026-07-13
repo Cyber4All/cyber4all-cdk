@@ -1,0 +1,6 @@
+{
+  "sonarlint.connectedMode.project": {
+    "connectionId": "cyber4all",
+    "projectKey": "Cyber4All_cyber4all-cdk"
+  }
+}

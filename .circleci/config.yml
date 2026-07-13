@@ -1,0 +1,176 @@
+version: 2.1
+orbs:
+  cyber4all: cyber4all/orb@2.1.8
+  node: circleci/node@7.2.1
+  aws-cli: circleci/aws-cli@5.4.1
+
+jobs:
+  cdk-diff:
+    parameters:
+      environment:
+        type: enum
+        enum: [staging, production]
+    docker:
+      - image: cimg/node:20.19
+    steps:
+      - checkout
+      - node/install-packages
+      - run:
+          name: Run CDK diff
+          command: |
+            if [ "<< parameters.environment >>" = "staging" ]; then
+              npm run cdk diff staging/* || true
+            else
+              npm run cdk diff prod/* || true
+            fi
+
+  cdk-deploy:
+    parameters:
+      environment:
+        type: enum
+        enum: [staging, production]
+    docker:
+      - image: cimg/node:20.19
+    steps:
+      - checkout
+      - node/install-packages
+      - run:
+          name: Run CDK deploy
+          command: |
+            if [ "<< parameters.environment >>" = "staging" ]; then
+              npm run cdk deploy staging/* --require-approval never
+            else
+              npm run cdk deploy prod/* --require-approval never
+            fi
+
+  plan_deployment_marker:
+    parameters:
+      environment:
+        type: enum
+        enum: [staging, production]
+      component_name:
+        type: string
+    docker:
+      - image: cimg/node:20.19
+    steps:
+      - checkout
+      - run:
+          name: Plan deployment marker
+          command: |
+            PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+            DEPLOY_ENVIRONMENT="clark-<< parameters.environment >>"
+            if [ "<< parameters.environment >>" = "staging" ]; then
+              TARGET_VERSION="${PACKAGE_VERSION}-${CIRCLE_SHA1:0:7}"
+            else
+              TARGET_VERSION="${PACKAGE_VERSION}"
+            fi
+            DEPLOY_NAME="deploy-${DEPLOY_ENVIRONMENT}-<< parameters.component_name >>"
+            circleci run release plan "$DEPLOY_NAME" \
+              --environment-name="${DEPLOY_ENVIRONMENT}" \
+              --component-name="<< parameters.component_name >>" \
+              --target-version="${TARGET_VERSION}"
+
+  update_deployment_marker:
+    parameters:
+      environment:
+        type: enum
+        enum: [staging, production]
+      component_name:
+        type: string
+      status:
+        type: enum
+        enum: [SUCCESS, FAILED, CANCELED]
+    docker:
+      - image: cimg/node:20.19
+    steps:
+      - run:
+          name: Update deployment marker
+          command: |
+            DEPLOY_ENVIRONMENT="clark-<< parameters.environment >>"
+            DEPLOY_NAME="deploy-${DEPLOY_ENVIRONMENT}-<< parameters.component_name >>"
+            circleci run release update "$DEPLOY_NAME" --status="<< parameters.status >>"
+
+workflows:
+  deploy:
+    when:
+      equal: [main, << pipeline.git.branch >>]
+    jobs:
+      - cdk-diff:
+          name: cdk_diff_staging
+          environment: staging
+
+      - hold_deploy_staging:
+          type: approval
+          requires:
+            - cdk_diff_staging
+
+      - plan_deployment_marker:
+          name: plan_marker_staging
+          environment: staging
+          component_name: cyber4all-cdk
+          requires:
+            - hold_deploy_staging
+
+      - cdk-deploy:
+          name: cdk_deploy_staging
+          environment: staging
+          requires:
+            - plan_marker_staging
+
+      - update_deployment_marker:
+          name: mark_staging_success
+          environment: staging
+          component_name: cyber4all-cdk
+          status: SUCCESS
+          requires:
+            - cdk_deploy_staging
+
+      - update_deployment_marker:
+          name: mark_staging_failed
+          environment: staging
+          component_name: cyber4all-cdk
+          status: FAILED
+          requires:
+            - cdk_deploy_staging:
+                - failed
+
+      - cdk-diff:
+          name: cdk_diff_prod
+          environment: production
+          requires:
+            - mark_staging_success
+
+      - hold_deploy_prod:
+          type: approval
+          requires:
+            - cdk_diff_prod
+
+      - plan_deployment_marker:
+          name: plan_marker_prod
+          environment: production
+          component_name: cyber4all-cdk
+          requires:
+            - hold_deploy_prod
+
+      - cdk-deploy:
+          name: cdk_deploy_prod
+          environment: production
+          requires:
+            - plan_marker_prod
+
+      - update_deployment_marker:
+          name: mark_prod_success
+          environment: production
+          component_name: cyber4all-cdk
+          status: SUCCESS
+          requires:
+            - cdk_deploy_prod
+
+      - update_deployment_marker:
+          name: mark_prod_failed
+          environment: production
+          component_name: cyber4all-cdk
+          status: FAILED
+          requires:
+            - cdk_deploy_prod:
+                - failed

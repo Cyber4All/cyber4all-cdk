@@ -1,0 +1,36 @@
+{
+  "mongodbAtlasProjectId:stg": "69f0e944fb0b3efbea58bef0",
+  "mongodbAtlasProjectId:prd": "",
+  "availability-zones:account=317620868823:region=us-east-1": [
+    "us-east-1a",
+    "us-east-1b",
+    "us-east-1c",
+    "us-east-1d",
+    "us-east-1e",
+    "us-east-1f"
+  ],
+  "hosted-zone:account=317620868823:domainName=staging.clark.center:region=us-east-1": {
+    "Id": "/hostedzone/Z086313734GE8OR9XL3EK",
+    "Name": "staging.clark.center."
+  },
+  "hosted-zone:account=317620868823:domainName=staging.cybercompetencies.com:region=us-east-1": {
+    "Id": "/hostedzone/Z0909758P9Z6EN0EF7BP",
+    "Name": "staging.cybercompetencies.com."
+  },
+  "availability-zones:account=194683060534:region=us-east-1": [
+    "us-east-1a",
+    "us-east-1b",
+    "us-east-1c",
+    "us-east-1d",
+    "us-east-1e",
+    "us-east-1f"
+  ],
+  "hosted-zone:account=194683060534:domainName=clark.center:region=us-east-1": {
+    "Id": "/hostedzone/Z2TNJDV8P84M4L",
+    "Name": "clark.center."
+  },
+  "hosted-zone:account=194683060534:domainName=cybercompetencies.com:region=us-east-1": {
+    "Id": "/hostedzone/Z0296872291GVI0LLS6ON",
+    "Name": "cybercompetencies.com."
+  }
+}
