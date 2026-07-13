@@ -64,6 +64,15 @@ export class ClarkStack extends Stack {
         const mongoDbUriSecret = EcsSecret.fromSecretsManager(props.mongoCluster.connectionSecret, "MONGODB_URI");
         const sharedClarkSecret = EcsSecret.fromSecretsManager(clarkSecret, "SECRET_KEY");
 
+        // TODO: Remove this once CARDs Service is deprecated and no longer needed
+        // this is a manually legacy secret with username/password for the CARD cluster
+        // in MongoDB Atlas.
+        const cardMongoDbUriSecret = EcsSecret.fromSecretsManager(
+            Secret.fromSecretNameV2(this, "CardMongoDbUriSecret",
+                props.environment === Environment.PROD ? "prod/card/mongodb" : "staging/card/mongodb"),
+            "DB_URI"
+        )
+
         const defaultServiceProps = {
             environment: props.environment,
             dockerCredentials: props.dockerHubSecret,
@@ -201,10 +210,9 @@ export class ClarkStack extends Stack {
             },
         });
 
-        const cardService = new EcsService(this, "CardsService", {
+        const cardsService = new EcsService(this, "CardsService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/cards-service:${tag}`,
-            mongoCluster: props.mongoCluster,
             containerOptions: {
                 environment: {
                     "PORT": "3000",
@@ -224,7 +232,7 @@ export class ClarkStack extends Stack {
                     "SENDGRID_API_KEY": sendgridApiKeySecret,
                     "GOOGLE_CLIENT_ID": googleClientIdSecret,
                     "GOOGLE_CLIENT_SECRET": googleClientSecretSecret,
-                    "DB_URI": mongoDbUriSecret,
+                    "DB_URI": cardMongoDbUriSecret,
                     "SHORTCUT_API_TOKEN": shortcutSecret
                 }
             }
@@ -263,12 +271,12 @@ export class ClarkStack extends Stack {
             imageRepository: `cyber4all/clark-gateway:${tag}`,
             albRouting: {
                 loadBalancer: props.sharedAlb,
-                hostName: `api.${clarkConfig.clarkDomain}`,
+                hostName: props.environment === Environment.STAGING ? `api.${clarkConfig.clarkDomain}` : `api-gateway.${clarkConfig.clarkDomain}`,
             },
             containerOptions: {
                 environment: {
                     PORT: "3000",
-                    CARD_SERVICE_URI: getServiceConnectUri("cards-service"),
+                    CARD_SERVICE_URI: getServiceConnectUri(cardsService.serviceName),
                     CLARK_SERVICE_URI: getServiceConnectUri(clarkService.serviceName),
                     HIERARCHY_SERVICE_URI: getServiceConnectUri(hierarchyService.serviceName),
                     STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceName),
@@ -284,6 +292,7 @@ export class ClarkStack extends Stack {
         });
         clarkService.service.node.addDependency(standardGuidelinesService.service);
         hierarchyService.service.node.addDependency(clarkService.service);
+        clarkGatewayService.service.node.addDependency(cardsService.service);
         clarkGatewayService.service.node.addDependency(clarkService.service);
         clarkGatewayService.service.node.addDependency(hierarchyService.service);
         clarkGatewayService.service.node.addDependency(standardGuidelinesService.service);

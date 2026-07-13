@@ -141,6 +141,7 @@ export class EventDrivenEcsTask extends Construct {
         Tags.of(securityGroup).add(NAME_TAG, securityGroupName);
 
         this.eventRule = new Rule(this, "EventRule", {
+            ruleName: `${this.baseName}-${taskName}-event-rule-${this.regionShortName}-${this.uniqueSuffix}`,
             eventPattern: props.eventPattern,
         });
 

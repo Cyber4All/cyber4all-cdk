@@ -25,8 +25,8 @@ export function getClarkRuntimeConfig(environment: Environment): ClarkRuntimeCon
                 clientUri: `https://${PROD_CLARK_DOMAIN}`,
                 cardClientUri: `https://caeresource.${PROD_CLARK_DOMAIN}`,
                 clientCookieDomain: PROD_CLARK_DOMAIN,
-                gatewayUri: `https://api.${PROD_CLARK_DOMAIN}`,
-                standardGuidelinesClientUrl: `https://api.${PROD_CLARK_DOMAIN}`,
+                gatewayUri: `https://api-gateway.${PROD_CLARK_DOMAIN}`, // TODO: Update this to the correct CLARK Gateway URI once old prod is down
+                standardGuidelinesClientUrl: `https://api-gateway.${PROD_CLARK_DOMAIN}`, // TODO: Update this to the correct CLARK Gateway URI once old prod is down
                 clarkReportsBucketName: "clark-reports",
                 clarkFileUploadsBucketName: "clark-prod-file-uploads",
                 knowledgeBaseId: "OD56DVFDSD",
