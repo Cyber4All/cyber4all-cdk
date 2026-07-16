@@ -67,6 +67,7 @@ export class CompetencyStack extends Stack {
 
         const securedAuthService = new EcsService(this, "SecuredAuthService", {
             ...defaultServiceProps,
+            mongoCluster: props.mongoCluster,
             imageRepository: `cyber4all/secured-auth-service:${tag}`,
             containerOptions: {
                 environment: {
@@ -92,6 +93,7 @@ export class CompetencyStack extends Stack {
 
         const competencyApiService = new EcsService(this, "CompetencyApiService", {
             ...defaultServiceProps,
+            mongoCluster: props.mongoCluster,
             imageRepository: `cyber4all/competency-api:${tag}`,
             containerOptions: {
                 environment: {

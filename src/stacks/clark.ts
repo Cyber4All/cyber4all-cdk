@@ -188,7 +188,8 @@ export class ClarkStack extends Stack {
             new PolicyStatement({
                 actions: [
                     "bedrock:*",
-                    "kendra:*"
+                    "kendra:*",
+                    "sts:GetCallerIdentity"
                 ],
                 resources: [
                     "*"
@@ -276,7 +277,7 @@ export class ClarkStack extends Stack {
             imageRepository: `cyber4all/clark-gateway:${tag}`,
             albRouting: {
                 loadBalancer: props.sharedAlb,
-                hostName: props.environment === Environment.STAGING ? `api.${clarkConfig.clarkDomain}` : `api-gateway.${clarkConfig.clarkDomain}`,
+                hostName: props.environment === Environment.STAGING ? `api.${clarkConfig.clarkDomain}` : `api.${clarkConfig.clarkDomain}`,
             },
             containerOptions: {
                 environment: {
