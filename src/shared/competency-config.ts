@@ -5,7 +5,6 @@ type CompetencyRuntimeConfig = {
     readonly gatewayUri: string;
     readonly clientUri: string;
     readonly clarkGatewayUri: string;
-    readonly lambdaUri: string;
     readonly competencyDomain: string;
     readonly securedAuthIssuer: string;
     readonly competencyFileUploadsBucketName: string;
@@ -21,7 +20,6 @@ export function getCompetencyRuntimeConfig(environment: Environment): Competency
                 gatewayUri: `https://api.${PROD_COMPETENCY_DOMAIN}`,
                 clientUri: `https://${PROD_COMPETENCY_DOMAIN}`,
                 clarkGatewayUri: `https://api.${PROD_CLARK_DOMAIN}`,
-                lambdaUri: "https://rpyftcuy3vmb6gleq3edoje3cm0gxaso.lambda-url.us-east-1.on.aws",
                 competencyDomain: PROD_COMPETENCY_DOMAIN,
                 securedAuthIssuer: "secured-auth-service",
                 competencyFileUploadsBucketName: "cc-file-upload-bucket-prod",
@@ -31,7 +29,6 @@ export function getCompetencyRuntimeConfig(environment: Environment): Competency
                 gatewayUri: `https://api.${STAGING_COMPETENCY_DOMAIN}`,
                 clientUri: `https://${STAGING_COMPETENCY_DOMAIN}`,
                 clarkGatewayUri: `https://api.${STAGING_CLARK_DOMAIN}`,
-                lambdaUri: "https://y3lr757k3zgryh2d3hhutuktbe0godpw.lambda-url.us-east-1.on.aws/",
                 competencyDomain: STAGING_COMPETENCY_DOMAIN,
                 securedAuthIssuer: "secured-auth-service",
                 competencyFileUploadsBucketName: "cc-file-upload-bucket-staging",

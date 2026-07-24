@@ -132,12 +132,10 @@ export class CompetencyStack extends Stack {
                     PORT: "3000",
                     PDP_URI: getServiceConnectUri(securedAuthService.serviceName),
                     COMPETENCY_API_URI: getServiceConnectUri(competencyApiService.serviceName),
-                    LAMBDA_URI: competencyConfig.lambdaUri,
                     NODE_ENV: nodeEnv,
                 },
                 secrets: {
                     AWS_SERVICE_KEY_SECRET: awsServiceKeySecret,
-                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
                 },
             },
         });
