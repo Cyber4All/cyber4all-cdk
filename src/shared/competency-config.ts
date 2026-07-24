@@ -19,7 +19,7 @@ export function getCompetencyRuntimeConfig(environment: Environment): Competency
             return {
                 gatewayUri: `https://api.${PROD_COMPETENCY_DOMAIN}`,
                 clientUri: `https://${PROD_COMPETENCY_DOMAIN}`,
-                clarkGatewayUri: `https://api-gateway.${PROD_CLARK_DOMAIN}`, // TODO: Update this to the correct CLARK Gateway URI once old prod is down
+                clarkGatewayUri: `https://api.${PROD_CLARK_DOMAIN}`,
                 lambdaUri: "https://rpyftcuy3vmb6gleq3edoje3cm0gxaso.lambda-url.us-east-1.on.aws",
                 competencyDomain: PROD_COMPETENCY_DOMAIN,
                 securedAuthIssuer: "secured-auth-service",
