@@ -8,6 +8,7 @@ type CompetencyRuntimeConfig = {
     readonly lambdaUri: string;
     readonly competencyDomain: string;
     readonly securedAuthIssuer: string;
+    readonly competencyFileUploadsBucketName: string;
 };
 
 export const PROD_COMPETENCY_DOMAIN = "cybercompetencies.com";
@@ -23,6 +24,7 @@ export function getCompetencyRuntimeConfig(environment: Environment): Competency
                 lambdaUri: "https://rpyftcuy3vmb6gleq3edoje3cm0gxaso.lambda-url.us-east-1.on.aws",
                 competencyDomain: PROD_COMPETENCY_DOMAIN,
                 securedAuthIssuer: "secured-auth-service",
+                competencyFileUploadsBucketName: "cc-file-upload-bucket-prod",
             };
         case Environment.STAGING:
             return {
@@ -32,6 +34,7 @@ export function getCompetencyRuntimeConfig(environment: Environment): Competency
                 lambdaUri: "https://y3lr757k3zgryh2d3hhutuktbe0godpw.lambda-url.us-east-1.on.aws/",
                 competencyDomain: STAGING_COMPETENCY_DOMAIN,
                 securedAuthIssuer: "secured-auth-service",
+                competencyFileUploadsBucketName: "cc-file-upload-bucket-staging",
             };
         default:
             throw new Error(`Unsupported environment: ${environment}`);

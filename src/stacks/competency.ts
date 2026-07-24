@@ -1,6 +1,6 @@
 import { RemovalPolicy, SecretValue, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret } from "aws-cdk-lib/aws-ecs";
-import { IBucket } from "aws-cdk-lib/aws-s3";
+import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { Construct } from "constructs";
 import { EcsCluster } from "../constructs/ecs-cluster";
@@ -9,7 +9,7 @@ import { MongoDBCluster } from "../constructs/mongodb-cluster";
 import { SharedAlb } from "../constructs/shared-alb";
 import { getCompetencyRuntimeConfig } from "../shared/competency-config";
 import { getServiceConnectUri } from "../shared/ecs";
-import { Application, Environment, getEnvironmentName } from "../shared/types";
+import { Environment, getEnvironmentName } from "../shared/types";
 
 export interface CompetencyStackProps extends StackProps {
     readonly environment: Environment;
@@ -21,8 +21,6 @@ export interface CompetencyStackProps extends StackProps {
     readonly dockerHubSecret: ISecret;
     readonly sendGridSecret: ISecret;
     readonly coralogixSecret: ISecret;
-    readonly otelConfigBucket: IBucket;
-    readonly otelConfigS3Url: string;
 }
 
 export class CompetencyStack extends Stack {
@@ -57,12 +55,6 @@ export class CompetencyStack extends Stack {
             environment: props.environment,
             dockerCredentials: props.dockerHubSecret,
             cluster: props.cluster.cluster,
-            otelSidecarOptions: {
-                applicationName: Application.COMPETENCY,
-                coralogixSecret: props.coralogixSecret,
-                otelConfigBucket: props.otelConfigBucket,
-                otelConfigS3Url: props.otelConfigS3Url,
-            },
         };
 
         const securedAuthService = new EcsService(this, "SecuredAuthService", {
@@ -103,15 +95,30 @@ export class CompetencyStack extends Stack {
                     NICE_DB_NAME: "nice-framework",
                     DCWF_DB_NAME: "dcwf-db",
                     COMP_DB_NAME: "competency-api",
+                    BUCKET_NAME: competencyConfig.competencyFileUploadsBucketName,
                     NODE_ENV: nodeEnv,
                 },
                 secrets: {
                     AWS_SERVICE_KEY_SECRET: awsServiceKeySecret,
                     DB_URI: mongoDbUriSecret,
-                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
                 },
             },
         });
+
+        competencyApiService.taskDefinition.taskRole.addToPrincipalPolicy(
+            new PolicyStatement({
+                actions: [
+                    "s3:PutObject",
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                    "s3:DeleteObject",
+                ],
+                resources: [
+                    `arn:aws:s3:::${competencyConfig.competencyFileUploadsBucketName}/*`,
+                    `arn:aws:s3:::${competencyConfig.competencyFileUploadsBucketName}`,
+                ],
+            })
+        );
 
         const competencyGatewayService = new EcsService(this, "CompetencyGatewayService", {
             ...defaultServiceProps,
