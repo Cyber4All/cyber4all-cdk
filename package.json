@@ -1,6 +1,6 @@
 {
   "name": "cyber4all-cdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "bin": {
     "cyber4all-cdk": "bin/cyber4all-cdk.js"
   },
