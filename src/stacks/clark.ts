@@ -129,6 +129,7 @@ export class ClarkStack extends Stack {
                     CLIENT_COOKIE_DOMAIN: clarkConfig.clientCookieDomain,
                     BUCKET_NAME: clarkConfig.clarkFileUploadsBucketName,
                     CLARK_REPORTS_BUCKET_NAME: clarkConfig.clarkReportsBucketName,
+                    KNOWLEDGE_BASE_ID: clarkConfig.knowledgeBaseId,
                     STANDARD_GUIDELINES_SERVICE_URI: getServiceConnectUri(standardGuidelinesService.serviceName),
                     ISSUER: clarkConfig.clarkIssuer,
                     NODE_ENV: nodeEnv,
