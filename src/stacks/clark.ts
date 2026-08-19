@@ -274,7 +274,6 @@ export class ClarkStack extends Stack {
 
         const clarkGatewayService = new EcsService(this, "ClarkGatewayService", {
             ...defaultServiceProps,
-            ...otelSidecarOptions,
             imageRepository: `cyber4all/clark-gateway:${tag}`,
             albRouting: {
                 loadBalancer: props.sharedAlb,
