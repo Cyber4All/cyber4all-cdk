@@ -292,7 +292,6 @@ export class ClarkStack extends Stack {
                 },
                 secrets: {
                     AWS_JWT_SECRET: sharedClarkSecret,
-                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
                 },
             },
         });
