@@ -161,8 +161,8 @@ export class ClarkStack extends Stack {
             },
         });
 
-        agenticFileProcessingQueue.grantSendMessages(clarkService.taskDefinition.taskRole);
-        agenticFileProcessingQueue.grantConsumeMessages(clarkService.taskDefinition.taskRole);
+        agenticFileProcessingQueue.grants.sendMessages(clarkService.taskDefinition.taskRole);
+        agenticFileProcessingQueue.grants.consumeMessages(clarkService.taskDefinition.taskRole);
 
         clarkService.taskDefinition.taskRole.addToPrincipalPolicy(
             new PolicyStatement({
