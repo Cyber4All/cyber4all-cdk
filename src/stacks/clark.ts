@@ -1,13 +1,12 @@
-import { RemovalPolicy, SecretValue, Stack, StackProps } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, SecretValue, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret } from "aws-cdk-lib/aws-ecs";
 import { EventPattern } from "aws-cdk-lib/aws-events";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { IBucket } from "aws-cdk-lib/aws-s3";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
+import { Queue, QueueEncryption } from "aws-cdk-lib/aws-sqs";
 import { Construct } from "constructs";
-import {
-    AWS_REGION,
-} from "../constants";
+import { AWS_REGION } from "../constants";
 import { EcsCluster } from "../constructs/ecs-cluster";
 import { EcsService } from "../constructs/ecs-service";
 import { EventDrivenEcsTask } from "../constructs/event-driven-ecs-task";
@@ -52,26 +51,42 @@ export class ClarkStack extends Stack {
             },
         });
         const sendgridApiKeySecret = EcsSecret.fromSecretsManager(props.sendGridSecret, "SENDGRID_API_KEY");
-        const sendgridVerifiedUserApiKeySecret = EcsSecret.fromSecretsManager(props.sendGridSecret, "SENDGRID_VERIFIED_USER_API_KEY");
+        const sendgridVerifiedUserApiKeySecret = EcsSecret.fromSecretsManager(
+            props.sendGridSecret,
+            "SENDGRID_VERIFIED_USER_API_KEY",
+        );
         const shortcutSecret = EcsSecret.fromSecretsManager(props.shortcutSecret, "SHORTCUT_API_KEY");
         const slackTokenSecret = EcsSecret.fromSecretsManager(props.slackSecret, "SLACK_TOKEN");
         const slackUriSecret = EcsSecret.fromSecretsManager(props.slackSecret, "SLACK_URI");
-        const googleClientIdSecret = EcsSecret.fromSecretsManager(props.googleSecret, "GOOGLE_CLIENT_ID")
-        const googleClientSecretSecret = EcsSecret.fromSecretsManager(props.googleSecret, "GOOGLE_CLIENT_SECRET")
-        const googlePrivateKeySecret = EcsSecret.fromSecretsManager(props.googleSecret, "GOOGLE_PRIVATE_KEY")
-        const googleServiceAccountEmailSecret = EcsSecret.fromSecretsManager(props.googleSecret, "GOOGLE_SERVICE_ACCOUNT_EMAIL")
+        const googleClientIdSecret = EcsSecret.fromSecretsManager(props.googleSecret, "GOOGLE_CLIENT_ID");
+        const googleClientSecretSecret = EcsSecret.fromSecretsManager(props.googleSecret, "GOOGLE_CLIENT_SECRET");
+        const googlePrivateKeySecret = EcsSecret.fromSecretsManager(props.googleSecret, "GOOGLE_PRIVATE_KEY");
+        const googleServiceAccountEmailSecret = EcsSecret.fromSecretsManager(
+            props.googleSecret,
+            "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+        );
         const coralogixPrivateKeySecret = EcsSecret.fromSecretsManager(props.coralogixSecret, "PRIVATE_KEY");
         const mongoDbUriSecret = EcsSecret.fromSecretsManager(props.mongoCluster.connectionSecret, "MONGODB_URI");
         const sharedClarkSecret = EcsSecret.fromSecretsManager(clarkSecret, "SECRET_KEY");
+
+        const agenticFileProcessingQueue = new Queue(this, "AgenticFileProcessingQueue", {
+            queueName: `${props.environment}-clark-agentic-file-processing`,
+            encryption: QueueEncryption.SQS_MANAGED,
+            receiveMessageWaitTime: Duration.seconds(20),
+            visibilityTimeout: Duration.seconds(300),
+        });
 
         // TODO: Remove this once CARDs Service is deprecated and no longer needed
         // this is a manually legacy secret with username/password for the CARD cluster
         // in MongoDB Atlas.
         const cardMongoDbUriSecret = EcsSecret.fromSecretsManager(
-            Secret.fromSecretNameV2(this, "CardMongoDbUriSecret",
-                props.environment === Environment.PROD ? "prod/card/mongodb" : "staging/card/mongodb"),
-            "DB_URI"
-        )
+            Secret.fromSecretNameV2(
+                this,
+                "CardMongoDbUriSecret",
+                props.environment === Environment.PROD ? "prod/card/mongodb" : "staging/card/mongodb",
+            ),
+            "DB_URI",
+        );
 
         const defaultServiceProps = {
             environment: props.environment,
@@ -85,7 +100,7 @@ export class ClarkStack extends Stack {
                 coralogixSecret: props.coralogixSecret,
                 otelConfigBucket: props.otelConfigBucket,
                 otelConfigS3Url: props.otelConfigS3Url,
-            }
+            },
         };
 
         const standardGuidelinesService = new EcsService(this, "StandardGuidelinesService", {
@@ -113,6 +128,22 @@ export class ClarkStack extends Stack {
             },
         });
 
+        const doclingService = new EcsService(this, "DoclingService", {
+            environment: props.environment,
+            cluster: props.cluster.cluster,
+            taskCpu: 2048,
+            taskMemoryLimitMiB: 4096,
+            imageRepository: "ghcr.io/docling-project/docling-serve:v1.32.0",
+            containerPort: 5001,
+            containerOptions: {
+                environment: {
+                    PORT: "5001",
+                    DOCLING_BASE_URL: "http://localhost:8000",
+                    DOCLING_SERVE_ENABLE_UI: "1",
+                },
+            },
+        });
+
         const clarkService = new EcsService(this, "ClarkService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/clark-service:${tag}`,
@@ -121,12 +152,15 @@ export class ClarkStack extends Stack {
                 environment: {
                     PORT: "3000",
                     AWS_REGION,
+                    AWS_SQS_ENDPOINT: `https://sqs.${this.region}.${this.urlSuffix}/${this.account}`,
+                    FILE_PROCESSING_QUEUE_NAME: agenticFileProcessingQueue.queueName,
                     COGNITO_REGION: AWS_REGION,
                     COGNITO_IDENTITY_POOL_ID: clarkConfig.cognitoIdentityPoolId,
                     COGNITO_ADMIN_IDENTITY_POOL_ID: clarkConfig.cognitoAdminIdentityPoolId,
                     GATEWAY_URI: clarkConfig.gatewayUri,
                     CLIENT_URI: clarkConfig.clientUri,
                     CLIENT_COOKIE_DOMAIN: clarkConfig.clientCookieDomain,
+                    DOCLING_SERVICE_URI: getServiceConnectUri(doclingService.serviceName),
                     BUCKET_NAME: clarkConfig.clarkFileUploadsBucketName,
                     CLARK_REPORTS_BUCKET_NAME: clarkConfig.clarkReportsBucketName,
                     KNOWLEDGE_BASE_ID: clarkConfig.knowledgeBaseId,
@@ -151,6 +185,9 @@ export class ClarkStack extends Stack {
             },
         });
 
+        agenticFileProcessingQueue.grants.sendMessages(clarkService.taskDefinition.taskRole);
+        agenticFileProcessingQueue.grants.consumeMessages(clarkService.taskDefinition.taskRole);
+
         clarkService.taskDefinition.taskRole.addToPrincipalPolicy(
             new PolicyStatement({
                 actions: [
@@ -160,7 +197,6 @@ export class ClarkStack extends Stack {
                     "s3:GetObject",
                     "s3:PutObject",
                     "events:PutEvents",
-
                 ],
                 resources: [
                     Stack.of(this).formatArn({
@@ -179,24 +215,18 @@ export class ClarkStack extends Stack {
                     Stack.of(this).formatArn({
                         service: "events",
                         resource: "event-bus",
-                        resourceName: "default"
+                        resourceName: "default",
                     }),
-                ]
-            })
+                ],
+            }),
         );
 
         clarkService.taskDefinition.taskRole.addToPrincipalPolicy(
             new PolicyStatement({
-                actions: [
-                    "bedrock:*",
-                    "kendra:*",
-                    "sts:GetCallerIdentity"
-                ],
-                resources: [
-                    "*"
-                ]
-            })
-        )
+                actions: ["bedrock:*", "kendra:*", "sts:GetCallerIdentity"],
+                resources: ["*"],
+            }),
+        );
 
         const hierarchyService = new EcsService(this, "HierarchyService", {
             ...defaultServiceProps,
@@ -221,42 +251,27 @@ export class ClarkStack extends Stack {
             imageRepository: `cyber4all/cards-service:${tag}`,
             containerOptions: {
                 environment: {
-                    "PORT": "3000",
-                    "NODE_ENV": nodeEnv,
-                    "OTA_CODE_ISSUER": clarkConfig.clarkIssuer,
-                    "ISSUER": clarkConfig.clarkIssuer,
-                    "DB_NAME": "CARD",
-                    "CARD_CLIENT_URL": clarkConfig.cardClientUri,
-                    "GATEWAY_URI": clarkConfig.gatewayUri,
-                    "COOKIE_DOMAIN": clarkConfig.cardClientUri
+                    PORT: "3000",
+                    NODE_ENV: nodeEnv,
+                    OTA_CODE_ISSUER: clarkConfig.clarkIssuer,
+                    ISSUER: clarkConfig.clarkIssuer,
+                    DB_NAME: "CARD",
+                    CARD_CLIENT_URL: clarkConfig.cardClientUri,
+                    GATEWAY_URI: clarkConfig.gatewayUri,
+                    COOKIE_DOMAIN: clarkConfig.cardClientUri,
                 },
                 secrets: {
-                    "SERVICE_KEY": sharedClarkSecret,
-                    "SECRET_KEY": sharedClarkSecret,
-                    "OTA_CODE_SECRET": sharedClarkSecret,
-                    "CORALOGIX_PRIVATE_KEY": coralogixPrivateKeySecret,
-                    "SENDGRID_API_KEY": sendgridApiKeySecret,
-                    "GOOGLE_CLIENT_ID": googleClientIdSecret,
-                    "GOOGLE_CLIENT_SECRET": googleClientSecretSecret,
-                    "DB_URI": cardMongoDbUriSecret,
-                    "SHORTCUT_API_TOKEN": shortcutSecret
-                }
-            }
-        });
-
-        const doclingService = new EcsService(this, "DoclingService", {
-            ...defaultServiceProps,
-            taskCpu: 2048,
-            taskMemoryLimitMiB: 4096,
-            imageRepository: `quay.io/docling-project/docling-serve`,
-            containerPort: 5001,
-            containerOptions: {
-                environment: {
-                    PORT: "5001",
-                    DOCLING_BASE_URL: "http://localhost:8000",
-                    DOCLING_SERVE_ENABLE_UI: "1"
-                }
-            }
+                    SERVICE_KEY: sharedClarkSecret,
+                    SECRET_KEY: sharedClarkSecret,
+                    OTA_CODE_SECRET: sharedClarkSecret,
+                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
+                    SENDGRID_API_KEY: sendgridApiKeySecret,
+                    GOOGLE_CLIENT_ID: googleClientIdSecret,
+                    GOOGLE_CLIENT_SECRET: googleClientSecretSecret,
+                    DB_URI: cardMongoDbUriSecret,
+                    SHORTCUT_API_TOKEN: shortcutSecret,
+                },
+            },
         });
 
         const clarkMCPServer = new EcsService(this, "ClarkMCPServer", {
@@ -267,9 +282,9 @@ export class ClarkStack extends Stack {
                 environment: {
                     PORT: "8000",
                     DOCLING_BASE_URL: getServiceConnectUriWithPort(doclingService.serviceName, "5001"),
-                    GATEWAY_URI: clarkConfig.gatewayUri
-                }
-            }
+                    GATEWAY_URI: clarkConfig.gatewayUri,
+                },
+            },
         });
 
         const clarkGatewayService = new EcsService(this, "ClarkGatewayService", {
@@ -277,7 +292,10 @@ export class ClarkStack extends Stack {
             imageRepository: `cyber4all/clark-gateway:${tag}`,
             albRouting: {
                 loadBalancer: props.sharedAlb,
-                hostName: props.environment === Environment.STAGING ? `api.${clarkConfig.clarkDomain}` : `api.${clarkConfig.clarkDomain}`,
+                hostName:
+                    props.environment === Environment.STAGING
+                        ? `api.${clarkConfig.clarkDomain}`
+                        : `api.${clarkConfig.clarkDomain}`,
             },
             containerOptions: {
                 environment: {
@@ -292,11 +310,11 @@ export class ClarkStack extends Stack {
                 },
                 secrets: {
                     AWS_JWT_SECRET: sharedClarkSecret,
-                    CORALOGIX_PRIVATE_KEY: coralogixPrivateKeySecret,
                 },
             },
         });
         clarkService.service.node.addDependency(standardGuidelinesService.service);
+        clarkService.service.node.addDependency(doclingService);
         hierarchyService.service.node.addDependency(clarkService.service);
         clarkGatewayService.service.node.addDependency(cardsService.service);
         clarkGatewayService.service.node.addDependency(clarkService.service);
@@ -343,33 +361,23 @@ export class ClarkStack extends Stack {
 
         bundlingService.taskDefinition.taskRole.addToPrincipalPolicy(
             new PolicyStatement({
-                actions: [
-                    "events:PutEvents",
-                    "s3:PutObject",
-                    "s3:GetObject",
-                    "s3:ListBucket",
-                    "s3:DeleteBucket"
-                ],
+                actions: ["events:PutEvents", "s3:PutObject", "s3:GetObject", "s3:ListBucket", "s3:DeleteBucket"],
                 resources: [
                     `arn:aws:s3:::${clarkConfig.clarkFileUploadsBucketName}/*`,
                     `arn:aws:s3:::${clarkConfig.clarkFileUploadsBucketName}`,
                     Stack.of(this).formatArn({
                         service: "events",
                         resource: "event-bus",
-                        resourceName: "default"
+                        resourceName: "default",
                     }),
-                ]
+                ],
             }),
         );
         bundlingService.taskDefinition.taskRole.addToPrincipalPolicy(
             new PolicyStatement({
-                actions: [
-                    "ecs:DescribeTaskDefinition"
-                ],
-                resources: [
-                    "*"
-                ]
-            })
+                actions: ["ecs:DescribeTaskDefinition"],
+                resources: ["*"],
+            }),
         );
     }
 }
