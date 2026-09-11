@@ -1,9 +1,10 @@
-import { RemovalPolicy, SecretValue, Stack, StackProps } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, SecretValue, Stack, StackProps } from "aws-cdk-lib";
 import { Secret as EcsSecret } from "aws-cdk-lib/aws-ecs";
 import { EventPattern } from "aws-cdk-lib/aws-events";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { IBucket } from "aws-cdk-lib/aws-s3";
 import { ISecret, Secret } from "aws-cdk-lib/aws-secretsmanager";
+import { Queue, QueueEncryption } from "aws-cdk-lib/aws-sqs";
 import { Construct } from "constructs";
 import {
     AWS_REGION,
@@ -64,6 +65,13 @@ export class ClarkStack extends Stack {
         const mongoDbUriSecret = EcsSecret.fromSecretsManager(props.mongoCluster.connectionSecret, "MONGODB_URI");
         const sharedClarkSecret = EcsSecret.fromSecretsManager(clarkSecret, "SECRET_KEY");
 
+        const agenticFileProcessingQueue = new Queue(this, "AgenticFileProcessingQueue", {
+            queueName: `${props.environment}-clark-agentic-file-processing`,
+            encryption: QueueEncryption.SQS_MANAGED,
+            receiveMessageWaitTime: Duration.seconds(20),
+            visibilityTimeout: Duration.seconds(300),
+        });
+
         // TODO: Remove this once CARDs Service is deprecated and no longer needed
         // this is a manually legacy secret with username/password for the CARD cluster
         // in MongoDB Atlas.
@@ -121,6 +129,8 @@ export class ClarkStack extends Stack {
                 environment: {
                     PORT: "3000",
                     AWS_REGION,
+                    AWS_SQS_ENDPOINT: `https://sqs.${this.region}.${this.urlSuffix}/${this.account}`,
+                    FILE_PROCESSING_QUEUE_NAME: agenticFileProcessingQueue.queueName,
                     COGNITO_REGION: AWS_REGION,
                     COGNITO_IDENTITY_POOL_ID: clarkConfig.cognitoIdentityPoolId,
                     COGNITO_ADMIN_IDENTITY_POOL_ID: clarkConfig.cognitoAdminIdentityPoolId,
@@ -150,6 +160,9 @@ export class ClarkStack extends Stack {
                 },
             },
         });
+
+        agenticFileProcessingQueue.grantSendMessages(clarkService.taskDefinition.taskRole);
+        agenticFileProcessingQueue.grantConsumeMessages(clarkService.taskDefinition.taskRole);
 
         clarkService.taskDefinition.taskRole.addToPrincipalPolicy(
             new PolicyStatement({
