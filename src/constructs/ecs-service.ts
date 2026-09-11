@@ -90,8 +90,8 @@ export interface EcsServiceProps {
     /** Container image repository, optionally with a tag, such as cyber4all/service:staging. */
     readonly imageRepository: string;
 
-    /** Secrets Manager secret containing Docker registry credentials. */
-    readonly dockerCredentials: ISecret;
+    /** Optional Secrets Manager secret containing Docker registry credentials. */
+    readonly dockerCredentials?: ISecret;
 
     /** ECS cluster where the service is deployed. */
     readonly cluster: ICluster;
@@ -154,7 +154,6 @@ export class EcsService extends Construct {
         Object.values(props.containerOptions?.secrets ?? {}).forEach((secret) => {
             secret.grantRead(executionRole);
         });
-
         const taskRoleName = `${this.baseName}-${imageName}-task-role-${this.regionShortName}-${this.uniqueSuffix}`;
         const taskRole = new Role(this, "TaskRole", {
             roleName: taskRoleName,

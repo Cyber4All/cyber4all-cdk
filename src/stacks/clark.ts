@@ -245,10 +245,11 @@ export class ClarkStack extends Stack {
         });
 
         const doclingService = new EcsService(this, "DoclingService", {
-            ...defaultServiceProps,
+            environment: props.environment,
+            cluster: props.cluster.cluster,
             taskCpu: 2048,
             taskMemoryLimitMiB: 4096,
-            imageRepository: `quay.io/docling-project/docling-serve`,
+            imageRepository: "ghcr.io/docling-project/docling-serve:v1.32.0",
             containerPort: 5001,
             containerOptions: {
                 environment: {
