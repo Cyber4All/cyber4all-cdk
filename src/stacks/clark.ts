@@ -228,6 +228,21 @@ export class ClarkStack extends Stack {
             }),
         );
 
+        clarkService.taskDefinition.taskRole.addToPrincipalPolicy(
+            new PolicyStatement({
+                actions: [
+                    "aws-marketplace:Subscribe",
+                    "aws-marketplace:ViewSubscriptions",
+                ],
+                resources: ["*"],
+                conditions: {
+                    StringEquals: {
+                        "aws:CalledViaLast": "bedrock.amazonaws.com",
+                    },
+                },
+            }),
+        );
+
         const hierarchyService = new EcsService(this, "HierarchyService", {
             ...defaultServiceProps,
             imageRepository: `cyber4all/hierarchy-service:${tag}`,
