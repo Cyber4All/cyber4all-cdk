@@ -160,7 +160,7 @@ export class ClarkStack extends Stack {
                     GATEWAY_URI: clarkConfig.gatewayUri,
                     CLIENT_URI: clarkConfig.clientUri,
                     CLIENT_COOKIE_DOMAIN: clarkConfig.clientCookieDomain,
-                    DOCLING_SERVICE_URI: getServiceConnectUri(doclingService.serviceName),
+                    DOCLING_SERVICE_URI: getServiceConnectUriWithPort(doclingService.serviceName, "5001"),
                     BUCKET_NAME: clarkConfig.clarkFileUploadsBucketName,
                     CLARK_REPORTS_BUCKET_NAME: clarkConfig.clarkReportsBucketName,
                     KNOWLEDGE_BASE_ID: clarkConfig.knowledgeBaseId,
@@ -320,7 +320,6 @@ export class ClarkStack extends Stack {
         clarkGatewayService.service.node.addDependency(clarkService.service);
         clarkGatewayService.service.node.addDependency(hierarchyService.service);
         clarkGatewayService.service.node.addDependency(standardGuidelinesService.service);
-        doclingService.service.node.addDependency(clarkGatewayService);
         clarkMCPServer.service.node.addDependency(clarkGatewayService);
         clarkMCPServer.service.node.addDependency(doclingService);
 
