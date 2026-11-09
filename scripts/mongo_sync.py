@@ -37,29 +37,15 @@ REGION_SHORT = "use1"
 LOCAL_URI = "mongodb://localhost:27017"
 MOCK_PASSWORD = "MockPassword123"
 DEFAULT_APPS = ("clark", "competency")
-LEGACY_SSM_ACCOUNT_ID = "842676000360"
 PROD_MONGO_AUTH_ROLE_ARN = "arn:aws:iam::194683060534:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_AWSDeveloperAccess_a4ce2d7d5ed4adfc"
 STAGING_MONGO_AUTH_ROLE_ARN = "arn:aws:iam::317620868823:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_AWSDeveloperAccess_6653ddc859367089"
-SOURCE_CHOICES = {
-    "Legacy prod SSM connection strings": "legacy",
-    "Current prod Secrets Manager connection strings": "current",
-}
-STAGING_SOURCE_CHOICES = {
-    "Legacy staging SSM connection strings": "legacy",
-    "Current staging Secrets Manager connection strings": "current",
-}
 TARGET_CHOICES = {
     "Staging": "staging",
     "Local": "local",
 }
 
-SECRET_NAME = (
-    "/cyber4all/mongodb/{env}-cyber4all-{app}-cluster-" + REGION_SHORT + "/connection"
-)
 SECRET_URI_KEY = "MONGODB_URI"
-LEGACY_SSM_NAME = "/{legacy_env}/{app}/mongo/connection-string"
 
-LEGACY_ENVS = {"prd": "prod", "stg": "staging"}
 USER_COLLECTIONS = {
     "clark": ("onion", "users"),
     "competency": ("secured-auth", "users"),
@@ -100,13 +86,6 @@ def prompt_args() -> SimpleNamespace:
     if not sys.stdin.isatty():
         raise SyncError("Interactive prompts require a TTY.")
 
-    source_label = ask(
-        [
-            inquirer.List(
-                "source", message="Which prod source?", choices=tuple(SOURCE_CHOICES)
-            )
-        ]
-    )["source"]
     target_label = ask(
         [
             inquirer.List(
@@ -116,32 +95,12 @@ def prompt_args() -> SimpleNamespace:
             )
         ]
     )["target"]
-    source = SOURCE_CHOICES[source_label]
     target = TARGET_CHOICES[target_label]
-    target_source = "local"
-    if target == "staging":
-        staging_source_label = ask(
-            [
-                inquirer.List(
-                    "target_source",
-                    message="Which staging connection string source?",
-                    choices=tuple(STAGING_SOURCE_CHOICES),
-                )
-            ]
-        )["target_source"]
-        target_source = STAGING_SOURCE_CHOICES[staging_source_label]
 
     return SimpleNamespace(
-        source=source,
-        target_source=target_source,
         target=target,
         func=run_selected_workflow,
         apps=prompt_apps(),
-        legacy_ssm_profile=(
-            find_legacy_ssm_profile()
-            if "legacy" in (source, target_source)
-            else None
-        ),
         source_profile=find_profile_for_role(PROD_MONGO_AUTH_ROLE_ARN),
         target_profile=(
             find_profile_for_role(STAGING_MONGO_AUTH_ROLE_ARN)
@@ -204,20 +163,12 @@ def backup_prod(args: SimpleNamespace, apps: Sequence[str]) -> Path:
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "region": REGION,
         "source": "prod",
-        "source_store": "legacy-ssm" if args.source == "legacy" else "secrets-manager",
+        "source_store": "secrets-manager",
         "source_mongo_auth_role_arn": PROD_MONGO_AUTH_ROLE_ARN,
         "target": args.target,
-        "target_store": (
-            "legacy-ssm"
-            if args.target == "staging" and args.target_source == "legacy"
-            else "secrets-manager"
-            if args.target == "staging"
-            else "local"
-        ),
+        "target_store": "secrets-manager" if args.target == "staging" else "local",
         "apps": {},
     }
-    if "legacy" in (args.source, args.target_source):
-        manifest["legacy_ssm_account_id"] = LEGACY_SSM_ACCOUNT_ID
     for app in apps:
         archive = backup_dir / f"{app}.archive.gz"
         log_path = backup_dir / f"{app}.mongodump.log"
@@ -340,36 +291,6 @@ def find_profile_for_role(role_arn: str) -> str:
     return matches[0]
 
 
-def find_legacy_ssm_profile() -> str:
-    profiles = aws_config_profiles()
-    preferred = ("AWSDeveloperAccess", "AWSAdministratorAccess")
-    for permission_set in preferred:
-        for name, values in profiles.items():
-            if (
-                values.get("sso_account_id") == LEGACY_SSM_ACCOUNT_ID
-                and values.get("sso_role_name") == permission_set
-            ):
-                return name
-
-    matches = [
-        name
-        for name, values in profiles.items()
-        if values.get("sso_account_id") == LEGACY_SSM_ACCOUNT_ID
-    ]
-    if not matches:
-        raise SyncError(
-            f"No AWS profile found in ~/.aws/config for legacy SSM account {LEGACY_SSM_ACCOUNT_ID}. "
-            "Run `aws configure sso` or add a dev-account profile that can read the legacy parameters."
-        )
-    if len(matches) > 1:
-        log.warning(
-            "Multiple profiles match legacy SSM account %s. Using %s.",
-            LEGACY_SSM_ACCOUNT_ID,
-            matches[0],
-        )
-    return matches[0]
-
-
 def aws_config_profiles() -> dict[str, dict[str, str]]:
     config_path = Path.home() / ".aws" / "config"
     if not config_path.exists():
@@ -396,23 +317,19 @@ def sso_permission_set(role_arn: str) -> str:
 
 
 def prod_uri(app: str, args: SimpleNamespace) -> str:
-    if args.source == "legacy":
-        return mongo_uri(ssm_uri(app, "prd", args.legacy_ssm_profile))
     return mongo_uri(secret_uri(app, "prd", args.source_profile))
 
 
 def target_uri(app: str, args: SimpleNamespace) -> str:
     if args.target == "local":
         return LOCAL_URI
-    if args.target == "staging" and args.target_source == "legacy":
-        return mongo_uri(ssm_uri(app, "stg", args.legacy_ssm_profile))
     if args.target == "staging":
         return mongo_uri(secret_uri(app, "stg", args.target_profile))
     raise SyncError(f"Unsupported restore target: {args.target}")
 
 
 def secret_uri(app: str, env: str, profile: str | None) -> str:
-    name = SECRET_NAME.format(env=env, app=app)
+    name = f"/cyber4all/mongodb/{env}-cyber4all-{app}-cluster-{REGION_SHORT}/connection"
     try:
         response = aws(profile).client("secretsmanager").get_secret_value(SecretId=name)
     except botocore.exceptions.BotoCoreError as exc:
@@ -434,21 +351,6 @@ def secret_uri(app: str, env: str, profile: str | None) -> str:
         if isinstance(uri, str) and uri.startswith("mongodb"):
             return uri
     raise SyncError(f"Secrets Manager secret {name} does not contain {SECRET_URI_KEY}.")
-
-
-def ssm_uri(app: str, env: str, profile: str | None) -> str:
-    name = LEGACY_SSM_NAME.format(legacy_env=LEGACY_ENVS[env], app=app)
-    try:
-        value = (
-            aws(profile)
-            .client("ssm")
-            .get_parameter(Name=name, WithDecryption=True)["Parameter"]["Value"]
-        )
-    except botocore.exceptions.BotoCoreError as exc:
-        raise SyncError(f"SSM lookup failed for {name}: {exc}") from exc
-    if not value.startswith("mongodb"):
-        raise SyncError(f"SSM parameter {name} is not a MongoDB URI.")
-    return value
 
 
 def aws(profile: str | None) -> boto3.Session:
